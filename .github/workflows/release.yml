@@ -1,0 +1,34 @@
+name: Verify and build
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=moderate
+      - run: npm test
+      - run: npm run build
+      - name: Verify committed bundle
+        run: git diff --exit-code -- main.js
+      - name: Package plugin
+        run: zip gsync-personal-2.0.0.zip main.js manifest.json LICENSE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gsync-personal-2.0.0
+          path: |
+            main.js
+            manifest.json
+            gsync-personal-2.0.0.zip

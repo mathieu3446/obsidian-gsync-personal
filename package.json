@@ -1,0 +1,1 @@
+{"name":"obsidian-gsync-personal","version":"2.0.0","description":"Personal hardened fork of GSync","main":"main.js","license":"MIT","scripts":{"build":"tsc --noEmit && node esbuild.config.mjs production","test":"node tests/run.mjs"},"devDependencies":{"@types/node":"26.6.3","esbuild":"0.28.2","obsidian":"1.14.4","typescript":"6.0.3"}}
