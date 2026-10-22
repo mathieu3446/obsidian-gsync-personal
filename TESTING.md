@@ -1,7 +1,7 @@
 # Validation — 2026-10-22
 
 - TypeScript strict compilation: passed.
-- 26 automated tests: passed.
+- 30 automated tests: passed.
 - npm audit: 0 known vulnerabilities in the selected dependency tree at verification time.
 - Tests cover encryption roundtrip, tampering, wrong passphrase, scope restrictions, PKCE, revocation, path validation, folder binding, deleted-file restoration, simultaneous edits, binary conflict copies, unique conflict names, case collisions, partial listings, ETag preconditions, invalid OAuth state and secret-free persistence.
 
@@ -19,3 +19,5 @@ These tests use fake Obsidian and Google APIs. They do not authenticate a real G
 8. Test the browser-to-Obsidian callback on every intended mobile OS. If the app was killed, restart sign-in.
 
 Any failed precondition must remain an error; do not remove concurrency guards to make a failing integration test pass.
+
+2.0.1: credential operation exclusion, unload during setup, concurrent unbound sync refusal and long conflict names are covered by four additional tests. Root initialization must be performed explicitly on the first device; other devices reuse the folder ID.

@@ -1,7 +1,7 @@
 import { App, TFile } from "obsidian";
 import { DriveClient, RemoteFile } from "./drive";
 import type { GSyncSettings } from "./settings";
-import { hash, safePath, uniqueSuffix } from "./security";
+import { hash, safePath, uniqueSuffix, conflictPath } from "./security";
 export interface SyncRecord { remoteId: string; remoteVersion: string; localHash: string }
 export type SyncState = Record<string,SyncRecord>;
 export interface SyncResult { uploaded: number; downloaded: number; conflicts: string[]; skipped: string[]; errors: string[] }
@@ -59,8 +59,7 @@ export async function runSync(app: App, drive: DriveClient, settings: GSyncSetti
     await vault.adapter.write(base+'.json',JSON.stringify({path,createdAt:new Date().toISOString()}));
   };
   const conflict = async (path: string, data: ArrayBuffer) => {
-    check(); const dot = path.lastIndexOf('.');
-    const cp = path.slice(0,dot)+` (conflict ${uniqueSuffix()})`+path.slice(dot);
+    check(); const cp = conflictPath(path);
     await parents(cp); await vault.createBinary(cp,data); // never overwrite an existing copy
     const remote = await upload(cp,data); await remember(cp,remote,data);
     result.conflicts.push(cp);

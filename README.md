@@ -1,10 +1,10 @@
-# GSync Personal — version 2.0.0
+# GSync Personal — version 2.0.1
 
 Fork personnel de [GSync par dg0988](https://github.com/dg0988/ObsidianGSync), sous licence MIT. Le projet original n'est pas responsable de ces modifications. Ce fork n'est pas une version officielle approuvée par Obsidian ou Google.
 
 ## Installation rapide
 
-1. Télécharge [le ZIP installable](downloads/gsync-personal-2.0.0.zip).
+1. Télécharge [le ZIP installable](downloads/gsync-personal-2.0.1.zip).
 2. Ferme Obsidian. Dans une **copie de ton coffre**, crée `.obsidian/plugins/gsync-personal/`.
 3. Extrais dans ce dossier `main.js`, `manifest.json` et `LICENSE` (sans sous-dossier supplémentaire).
 4. Relance Obsidian et active **GSync Personal** dans les extensions communautaires.
@@ -25,15 +25,15 @@ Aucun serveur à administrer ni abonnement supplémentaire. La connexion utilise
 
 5. Dans Obsidian → GSync Personal, renseigne le client ID et le client secret, puis choisis une **phrase secrète d'au moins 14 caractères**. Ne les ajoute jamais au dépôt GitHub.
 6. Clique **Save credentials**, puis **Sign in with Google**. Termine la connexion dans le navigateur et clique **Revenir à Obsidian**. Garde le même coffre ouvert ; si le système ferme l'application pendant la connexion, recommence.
-7. Clique **Sync** pour un premier essai. La synchronisation automatique est désactivée au départ ; active-la ensuite si tu le souhaites.
+7. Enregistre les paramètres si tu as changé le nom du dossier. Sur le **premier appareil uniquement**, clique **Create new destination**. Sur les suivants, renseigne directement l’identifiant du dossier existant et enregistre les paramètres. Clique ensuite **Sync** pour un premier essai. La synchronisation automatique est désactivée au départ ; active-la ensuite si tu le souhaites.
 
 En mode OAuth « test », Google peut faire expirer l'autorisation après sept jours. Une mise en production personnelle peut éviter cette contrainte selon la configuration de Google. Une éventuelle demande de vérification Google dépend du compte et des paramètres ; aucune désactivation de protection n'est requise par le plugin.
 
 ## Dossier Drive et deuxième appareil
 
-Le plugin demande uniquement `drive.file`, et crée un dossier dédié `Obsidian Personal`. Il **ne peut pas importer arbitrairement tous les fichiers d'un ancien dossier Drive**. Pour migrer, place d'abord les notes à synchroniser dans le coffre local : ce plugin les enverra dans son propre dossier.
+Le plugin demande uniquement `drive.file`. Le bouton **Create new destination** crée explicitement un dossier dédié, dont le nom porte un suffixe unique. La synchronisation ne crée jamais de destination automatiquement. Il **ne peut pas importer arbitrairement tous les fichiers d'un ancien dossier Drive**. Pour migrer, place d'abord les notes à synchroniser dans le coffre local : ce plugin les enverra dans son propre dossier.
 
-Après la première synchronisation, copie l'ID affiché dans **Bound folder ID**. Sur le deuxième appareil, utilise le même compte Google et le même client OAuth, connecte-toi, puis renseigne cet ID avant la première synchronisation. La phrase secrète locale peut être différente sur chaque appareil.
+Après la création de la destination, copie l'ID affiché dans **Bound folder ID**. Sur le deuxième appareil, utilise le même compte Google et le même client OAuth, connecte-toi, puis renseigne cet ID avant la première synchronisation. La phrase secrète locale peut être différente sur chaque appareil.
 
 Renommer ou déplacer le dossier Drive ne change pas l'ID mémorisé. S'il devient inaccessible ou part à la corbeille, la synchronisation s'arrête ; restaure le dossier ou choisis explicitement une nouvelle destination. Ne vide pas l'ID pour contourner une erreur sans vérifier la destination.
 

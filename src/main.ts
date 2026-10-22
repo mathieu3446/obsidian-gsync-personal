@@ -19,12 +19,13 @@ export default class GSyncPlugin extends Plugin {
   private active = true;
   private busy = false;
   private signingIn = false;
+  private credentialBusy = false;
   private queue: Promise<void> = Promise.resolve();
   private interval: number | null = null;
   private tab!: GSyncSettingTab;
   get unlocked() { return this.credentials !== null; }
   get signedIn() { return !!this.credentials?.refreshToken; }
-  get working() { return this.busy || this.signingIn; }
+  get working() { return this.busy || this.signingIn || this.credentialBusy; }
   async onload() {
     const d = await this.loadData() as Data | null;
     if (d && d.schema !== 2) throw new Error('Unsupported settings. Install this fork in its own plugin directory.');
@@ -44,21 +45,29 @@ export default class GSyncPlugin extends Plugin {
   }
   async unlock(password: string) {
     if (this.working) throw new Error('Wait for the current operation.');
+    this.credentialBusy=true;
+    try {
     if (!this.encrypted) throw new Error('Save credentials first.');
     const value = await unseal(this.encrypted,password) as Credentials;
     if (!value || typeof value.clientId !== 'string' || typeof value.clientSecret !== 'string' || typeof value.refreshToken !== 'string') throw new Error('Invalid credential format.');
+    if(!this.active) throw new Error('Plugin unloaded.');
     this.credentials = value; this.password = password; await this.prepare(); this.tab.display();
+    } finally { this.credentialBusy=false; }
   }
   async configure(clientId: string, clientSecret: string, password: string) {
     if (this.working) throw new Error('Wait for the current operation.');
+    this.credentialBusy=true;
+    try {
     if (this.encrypted && !this.unlocked) throw new Error('Unlock existing credentials before changing them.');
     if (!clientId.endsWith('.apps.googleusercontent.com') || !clientSecret) throw new Error('Enter a Google OAuth client ID and secret.');
     if (this.signedIn) throw new Error('Revoke the existing Google connection before replacing credentials.');
     const next = {clientId:clientId.trim(),clientSecret:clientSecret.trim(),refreshToken:''};
     const encrypted = await seal(next,password);
+    if(!this.active) throw new Error('Plugin unloaded.');
     this.encrypted = encrypted; this.credentials = next; this.password = password;
     this.state = Object.create(null); this.settings.remoteFolderId = '';
     await this.saveAll(); await this.prepare(); this.tab.display();
+    } finally { this.credentialBusy=false; }
   }
   lock() {
     if (this.working) throw new Error('Wait for the current operation before locking.');
@@ -120,6 +129,17 @@ export default class GSyncPlugin extends Plugin {
     if(next.remoteFolderId!==this.settings.remoteFolderId || next.remoteFolder!==this.settings.remoteFolder) this.state=Object.create(null);
     this.settings={...next}; this.pending=null;
     await this.saveAll(); await this.prepare(); this.schedule();
+  }
+  async initializeFolder() {
+    if(this.working || !this.signedIn) throw new Error('Unlock credentials and connect Google first.');
+    if(this.settings.remoteFolderId) throw new Error('A destination is already bound. Use its ID on other devices.');
+    this.busy=true;
+    try {
+      const id=await new DriveClient(()=>this.token()).createRoot(this.settings.remoteFolder);
+      if(!this.active) throw new Error('Plugin unloaded.');
+      this.settings.remoteFolderId=id; this.state=Object.create(null);
+      await this.saveAll(); new Notice('Destination created. Copy its folder ID to your other devices before syncing.',15000);
+    } finally { this.busy=false; if(this.active) this.tab.display(); }
   }
   schedule() {
     if(this.interval!==null) window.clearInterval(this.interval);

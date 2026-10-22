@@ -30,6 +30,7 @@ export class GSyncSettingTab extends PluginSettingTab {
         if(this.plugin.signedIn) new Setting(el).setName('Revoke Google access').setDesc('Revokes this authorization at Google, including other devices sharing it.').addButton(b=>b.setButtonText('Revoke and disconnect').onClick(()=>void action(()=>this.plugin.revoke())));
       }
     }
+    if(this.plugin.signedIn && !this.plugin.settings.remoteFolderId) new Setting(el).setName('First device only: create destination').setDesc('On other devices, enter the existing folder ID instead. Sync never creates a destination automatically.').addButton(b=>b.setButtonText('Create new destination').onClick(()=>void action(()=>this.plugin.initializeFolder())));
     const draft={...this.plugin.settings};
     new Setting(el).setName('Synchronization').setHeading();
     new Setting(el).setName('Dedicated folder name').setDesc('Created by this app. Existing arbitrary Drive files are not imported.').addText(t=>t.setValue(draft.remoteFolder).onChange(v=>draft.remoteFolder=v.trim()));

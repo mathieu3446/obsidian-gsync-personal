@@ -44,9 +44,12 @@ export class DriveClient {
       if (f.trashed || f.mimeType !== FOLDER || f.appProperties?.gsyncPersonal !== "1") throw new Error("Bound folder unavailable. Sync stopped; it will not be recreated automatically.");
       return f.id;
     }
-    const matches = await this.list(`'root' in parents and name = '${q(name)}' and mimeType = '${FOLDER}' and trashed = false and appProperties has { key='gsyncPersonal' and value='1' }`);
-    if (matches.length > 1) throw new Error("Multiple matching folders. Enter the exact folder ID in settings.");
-    return matches[0]?.id ?? await this.createFolder(name, "root", true);
+    throw new Error('No destination bound. Create a destination on ONE device in settings, then copy its folder ID to all other devices.');
+  }
+  async createRoot(name: string): Promise<string> {
+    if (!safeSegment(name)) throw new Error('Invalid dedicated folder name.');
+    // Explicit destinations have unique names; sync never creates or guesses a root.
+    return this.createFolder(name.slice(0,140)+' - '+crypto.randomUUID(),'root',true);
   }
   async createFolder(name: string, parentId: string, root = false): Promise<string> {
     if (!safeSegment(name)) throw new Error("Unsafe folder name");

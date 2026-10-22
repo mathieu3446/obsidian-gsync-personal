@@ -5,3 +5,7 @@ Version 2.0.0 is an intentionally incompatible personal fork with a separate Obs
 Restricted authorization; encrypted credential storage; explicit Google revocation; own static sign-in page; stable remote folder ID; no automatic deletion; content-based comparisons; conditional remote writes; atomic local text writes; conservative binary conflicts; recovery snapshots; path and listing validation; narrower default extensions; serialized state persistence; sanitized errors; reduced and updated build dependencies; regression tests and reproducible bundle checks.
 
 Retained MIT license and original attribution. Removed upstream donation UI because this is a separate personal fork. Removed promises that every conflict and arbitrary existing Drive folder can be handled transparently.
+
+## 2.0.1
+
+Serialize credential setup/unlock against lock and sync; discard credential setup after unload. Bound destination required before sync; explicit uniquely named destination creation on first device. Shorten conflict basenames to retain valid remote filenames. Four regression tests added (30 total).

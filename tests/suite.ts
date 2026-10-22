@@ -133,3 +133,27 @@ test('failed initial persistence releases synchronization lock',async()=>{
   responses.push({status:200,json:{files:[{id:'new-root'}]}});
   await p.sync();assert.equal(p.working,false);
 });
+
+test('credential setup blocks lock and concurrent setup until complete',async()=>{
+ const p=new GSyncPlugin();p.tab={display(){}};
+ const pending=p.configure('test.apps.googleusercontent.com','secret','a long test passphrase');
+ assert.equal(p.working,true);assert.throws(()=>p.lock(),/Wait/);
+ await assert.rejects(p.configure('other.apps.googleusercontent.com','secret','a long test passphrase'),/Wait/);
+ await pending;assert.equal(p.working,false);p.lock();assert.equal(p.unlocked,false);
+});
+test('unloaded plugin does not resurrect credentials after encryption',async()=>{
+ const p=new GSyncPlugin();p.tab={display(){}};
+ const pending=p.configure('test.apps.googleusercontent.com','secret','a long test passphrase');p.onunload();
+ await assert.rejects(pending,/unloaded/);assert.equal(p.unlocked,false);assert.equal(p.working,false);
+});
+test('simultaneous unbound syncs never create a root',async()=>{
+ responses.length=0;requests.length=0;const d=new DriveClient(async()=>'token');
+ const results=await Promise.allSettled([d.root('Dedicated',''),d.root('Dedicated','')]);
+ assert.ok(results.every(r=>r.status==='rejected'));assert.equal(requests.length,0);
+});
+test('long conflict filenames remain valid and preserve original extension',async()=>{
+ const {conflictPath,safeSegment}=await import('../src/security');
+ const path='Folder/'+ 'a'.repeat(190)+'.md';const cp=conflictPath(path);
+ assert.ok(cp.startsWith('Folder/'));assert.ok(cp.endsWith('.md'));assert.ok(safeSegment(cp.split('/').pop()));
+ assert.notEqual(cp,conflictPath(path));
+});

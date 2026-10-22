@@ -39,3 +39,16 @@ export function safePath(path: string, configDir: string): boolean {
     path.toLowerCase() !== configDir.toLowerCase() && !path.toLowerCase().startsWith(configDir.toLowerCase() + "/");
 }
 export function uniqueSuffix(): string { return crypto.randomUUID(); }
+
+export function conflictPath(path: string): string {
+  const slash=path.lastIndexOf('/');const prefix=path.slice(0,slash+1);const file=path.slice(slash+1);
+  const dot=file.lastIndexOf('.');const ext=dot>0?file.slice(dot):'';const base=dot>0?file.slice(0,dot):file;
+  const suffix=' (conflict '+uniqueSuffix()+')';
+  const budget=Math.min(200,999-prefix.length)-suffix.length-ext.length;
+  if(budget<1) throw new Error('Path too long for a safe conflict copy.');
+  let short=base.slice(0,budget);
+  if(/[\uD800-\uDBFF]$/.test(short)) short=short.slice(0,-1);
+  const result=prefix+short+suffix+ext;
+  if(!safeSegment(short+suffix+ext)) throw new Error('Unsafe conflict filename.');
+  return result;
+}

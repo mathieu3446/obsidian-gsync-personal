@@ -199,6 +199,22 @@ function safePath(path, configDir) {
 function uniqueSuffix() {
   return crypto.randomUUID();
 }
+function conflictPath(path) {
+  const slash = path.lastIndexOf("/");
+  const prefix = path.slice(0, slash + 1);
+  const file = path.slice(slash + 1);
+  const dot = file.lastIndexOf(".");
+  const ext = dot > 0 ? file.slice(dot) : "";
+  const base = dot > 0 ? file.slice(0, dot) : file;
+  const suffix = " (conflict " + uniqueSuffix() + ")";
+  const budget = Math.min(200, 999 - prefix.length) - suffix.length - ext.length;
+  if (budget < 1) throw new Error("Path too long for a safe conflict copy.");
+  let short = base.slice(0, budget);
+  if (/[\uD800-\uDBFF]$/.test(short)) short = short.slice(0, -1);
+  const result = prefix + short + suffix + ext;
+  if (!safeSegment(short + suffix + ext)) throw new Error("Unsafe conflict filename.");
+  return result;
+}
 
 // src/drive.ts
 var API = "https://www.googleapis.com/drive/v3";
@@ -251,16 +267,18 @@ var DriveClient = class {
     return out;
   }
   async root(name, savedId) {
-    var _a, _b, _c;
+    var _a;
     if (!safeSegment(name)) throw new Error("Enter one non-empty dedicated folder name, without slashes.");
     if (savedId) {
       const f = await this.metadata(savedId);
       if (f.trashed || f.mimeType !== FOLDER || ((_a = f.appProperties) == null ? void 0 : _a.gsyncPersonal) !== "1") throw new Error("Bound folder unavailable. Sync stopped; it will not be recreated automatically.");
       return f.id;
     }
-    const matches = await this.list(`'root' in parents and name = '${q(name)}' and mimeType = '${FOLDER}' and trashed = false and appProperties has { key='gsyncPersonal' and value='1' }`);
-    if (matches.length > 1) throw new Error("Multiple matching folders. Enter the exact folder ID in settings.");
-    return (_c = (_b = matches[0]) == null ? void 0 : _b.id) != null ? _c : await this.createFolder(name, "root", true);
+    throw new Error("No destination bound. Create a destination on ONE device in settings, then copy its folder ID to all other devices.");
+  }
+  async createRoot(name) {
+    if (!safeSegment(name)) throw new Error("Invalid dedicated folder name.");
+    return this.createFolder(name.slice(0, 140) + " - " + crypto.randomUUID(), "root", true);
   }
   async createFolder(name, parentId, root = false) {
     if (!safeSegment(name)) throw new Error("Unsafe folder name");
@@ -392,6 +410,7 @@ var GSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
         if (this.plugin.signedIn) new import_obsidian3.Setting(el).setName("Revoke Google access").setDesc("Revokes this authorization at Google, including other devices sharing it.").addButton((b) => b.setButtonText("Revoke and disconnect").onClick(() => void action(() => this.plugin.revoke())));
       }
     }
+    if (this.plugin.signedIn && !this.plugin.settings.remoteFolderId) new import_obsidian3.Setting(el).setName("First device only: create destination").setDesc("On other devices, enter the existing folder ID instead. Sync never creates a destination automatically.").addButton((b) => b.setButtonText("Create new destination").onClick(() => void action(() => this.plugin.initializeFolder())));
     const draft = { ...this.plugin.settings };
     new import_obsidian3.Setting(el).setName("Synchronization").setHeading();
     new import_obsidian3.Setting(el).setName("Dedicated folder name").setDesc("Created by this app. Existing arbitrary Drive files are not imported.").addText((t) => t.setValue(draft.remoteFolder).onChange((v) => draft.remoteFolder = v.trim()));
@@ -473,8 +492,7 @@ async function runSync(app, drive, settings, state, hooks) {
   };
   const conflict = async (path, data) => {
     check();
-    const dot = path.lastIndexOf(".");
-    const cp = path.slice(0, dot) + ` (conflict ${uniqueSuffix()})` + path.slice(dot);
+    const cp = conflictPath(path);
     await parents(cp);
     await vault.createBinary(cp, data);
     const remote = await upload(cp, data);
@@ -577,6 +595,7 @@ var GSyncPlugin = class extends import_obsidian5.Plugin {
     this.active = true;
     this.busy = false;
     this.signingIn = false;
+    this.credentialBusy = false;
     this.queue = Promise.resolve();
     this.interval = null;
   }
@@ -588,7 +607,7 @@ var GSyncPlugin = class extends import_obsidian5.Plugin {
     return !!((_a = this.credentials) == null ? void 0 : _a.refreshToken);
   }
   get working() {
-    return this.busy || this.signingIn;
+    return this.busy || this.signingIn || this.credentialBusy;
   }
   async onload() {
     const d = await this.loadData();
@@ -628,29 +647,41 @@ var GSyncPlugin = class extends import_obsidian5.Plugin {
   }
   async unlock(password) {
     if (this.working) throw new Error("Wait for the current operation.");
-    if (!this.encrypted) throw new Error("Save credentials first.");
-    const value = await unseal(this.encrypted, password);
-    if (!value || typeof value.clientId !== "string" || typeof value.clientSecret !== "string" || typeof value.refreshToken !== "string") throw new Error("Invalid credential format.");
-    this.credentials = value;
-    this.password = password;
-    await this.prepare();
-    this.tab.display();
+    this.credentialBusy = true;
+    try {
+      if (!this.encrypted) throw new Error("Save credentials first.");
+      const value = await unseal(this.encrypted, password);
+      if (!value || typeof value.clientId !== "string" || typeof value.clientSecret !== "string" || typeof value.refreshToken !== "string") throw new Error("Invalid credential format.");
+      if (!this.active) throw new Error("Plugin unloaded.");
+      this.credentials = value;
+      this.password = password;
+      await this.prepare();
+      this.tab.display();
+    } finally {
+      this.credentialBusy = false;
+    }
   }
   async configure(clientId, clientSecret, password) {
     if (this.working) throw new Error("Wait for the current operation.");
-    if (this.encrypted && !this.unlocked) throw new Error("Unlock existing credentials before changing them.");
-    if (!clientId.endsWith(".apps.googleusercontent.com") || !clientSecret) throw new Error("Enter a Google OAuth client ID and secret.");
-    if (this.signedIn) throw new Error("Revoke the existing Google connection before replacing credentials.");
-    const next = { clientId: clientId.trim(), clientSecret: clientSecret.trim(), refreshToken: "" };
-    const encrypted = await seal(next, password);
-    this.encrypted = encrypted;
-    this.credentials = next;
-    this.password = password;
-    this.state = /* @__PURE__ */ Object.create(null);
-    this.settings.remoteFolderId = "";
-    await this.saveAll();
-    await this.prepare();
-    this.tab.display();
+    this.credentialBusy = true;
+    try {
+      if (this.encrypted && !this.unlocked) throw new Error("Unlock existing credentials before changing them.");
+      if (!clientId.endsWith(".apps.googleusercontent.com") || !clientSecret) throw new Error("Enter a Google OAuth client ID and secret.");
+      if (this.signedIn) throw new Error("Revoke the existing Google connection before replacing credentials.");
+      const next = { clientId: clientId.trim(), clientSecret: clientSecret.trim(), refreshToken: "" };
+      const encrypted = await seal(next, password);
+      if (!this.active) throw new Error("Plugin unloaded.");
+      this.encrypted = encrypted;
+      this.credentials = next;
+      this.password = password;
+      this.state = /* @__PURE__ */ Object.create(null);
+      this.settings.remoteFolderId = "";
+      await this.saveAll();
+      await this.prepare();
+      this.tab.display();
+    } finally {
+      this.credentialBusy = false;
+    }
   }
   lock() {
     if (this.working) throw new Error("Wait for the current operation before locking.");
@@ -747,6 +778,22 @@ var GSyncPlugin = class extends import_obsidian5.Plugin {
     await this.saveAll();
     await this.prepare();
     this.schedule();
+  }
+  async initializeFolder() {
+    if (this.working || !this.signedIn) throw new Error("Unlock credentials and connect Google first.");
+    if (this.settings.remoteFolderId) throw new Error("A destination is already bound. Use its ID on other devices.");
+    this.busy = true;
+    try {
+      const id2 = await new DriveClient(() => this.token()).createRoot(this.settings.remoteFolder);
+      if (!this.active) throw new Error("Plugin unloaded.");
+      this.settings.remoteFolderId = id2;
+      this.state = /* @__PURE__ */ Object.create(null);
+      await this.saveAll();
+      new import_obsidian5.Notice("Destination created. Copy its folder ID to your other devices before syncing.", 15e3);
+    } finally {
+      this.busy = false;
+      if (this.active) this.tab.display();
+    }
   }
   schedule() {
     if (this.interval !== null) window.clearInterval(this.interval);
