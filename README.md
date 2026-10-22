@@ -1,5 +1,7 @@
 # GSync Personal — version 2.0.1
 
+**Guide complet PC, iPhone et Google Drive : [guide de mise en placec](guide%20de%20mise%20en%20placec.md).**
+
 Fork personnel de [GSync par dg0988](https://github.com/dg0988/ObsidianGSync), sous licence MIT. Le projet original n'est pas responsable de ces modifications. Ce fork n'est pas une version officielle approuvée par Obsidian ou Google.
 
 ## Installation rapide
@@ -10,7 +12,7 @@ Fork personnel de [GSync par dg0988](https://github.com/dg0988/ObsidianGSync), s
 4. Relance Obsidian et active **GSync Personal** dans les extensions communautaires.
 5. Désactive l'ancien GSync et tout autre moteur de synchronisation pour ce coffre. Ce fork n'importe pas ses anciens paramètres ni ses jetons.
 
-Sur mobile, il faut aussi copier ces fichiers dans le dossier de configuration du coffre, avec un gestionnaire de fichiers qui y a accès. L'archive de code source n'est pas le ZIP installable.
+Sur iPhone, installe BRAT depuis les extensions communautaires Obsidian, puis ajoute `mathieu3446/obsidian-gsync-personal` et sélectionne la release `2.0.1`. Les étapes détaillées sont dans le guide complet ci-dessus. L'archive de code source n'est pas le ZIP installable.
 
 ## Google : configuration initiale
 
