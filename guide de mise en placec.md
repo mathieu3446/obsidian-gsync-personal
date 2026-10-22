@@ -1,4 +1,4 @@
-# guide de mise en placec
+# guide de mise en place
 
 Guide complet pour installer **GSync Personal 2.0.1** sur **PC Windows et iPhone**, avec **Google Drive** comme espace de synchronisation.
 
