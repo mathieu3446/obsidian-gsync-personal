@@ -24,11 +24,11 @@ jobs:
       - name: Verify committed bundle
         run: git diff --exit-code -- main.js
       - name: Package plugin
-        run: zip gsync-personal-2.1.0.zip main.js manifest.json LICENSE
+        run: zip gsync-personal-2.1.1.zip main.js manifest.json LICENSE
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: gsync-personal-2.1.0
+          name: gsync-personal-2.1.1
           path: |
             main.js
             manifest.json
-            gsync-personal-2.1.0.zip
+            gsync-personal-2.1.1.zip

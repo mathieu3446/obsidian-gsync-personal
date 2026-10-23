@@ -13,3 +13,7 @@ Serialize credential setup/unlock against lock and sync; discard credential setu
 ## 2.1.0
 
 Use full Google Drive authorization at user request to discover files added manually or by other apps inside the bound folder. Keep AES-GCM credentials, passphrase handling, folder binding and no automatic deletion. Existing tokens require explicit reauthorization; no secret-storage or automatic-unlock change. Sign in again is available for connected accounts.
+
+## 2.1.1
+
+Fix updates of existing files failing because Drive v3 metadata supplies no ETag. Read the JSON metadata ETag using v2 and perform the conditional media PUT on the v2 upload endpoint; never mix a v2 ETag with v3 uploads. Reject stale versions and absent, weak or malformed validators. Retain the current MIME type, create a new revision, use the upload response version and verify the uploaded bytes by downloading again before checkpointing. Seven additional regression tests (42 total), including consecutive Markdown link edits and a two-client race. No credential schema or OAuth permission changes from 2.1.0.

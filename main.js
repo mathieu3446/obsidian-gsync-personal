@@ -219,6 +219,9 @@ function conflictPath(path) {
 // src/drive.ts
 var API = "https://www.googleapis.com/drive/v3";
 var UPLOAD = "https://www.googleapis.com/upload/drive/v3";
+var WRITE_API = "https://www.googleapis.com/drive/v2";
+var WRITE_UPLOAD = "https://www.googleapis.com/upload/drive/v2";
+var WRITE_FIELDS = "id,title,mimeType,md5Checksum,modifiedDate,fileSize,version,labels(trashed),etag";
 var FOLDER = "application/vnd.google-apps.folder";
 var FIELDS = "id,name,mimeType,md5Checksum,modifiedTime,size,version,trashed,appProperties";
 var q = (s) => s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
@@ -229,7 +232,7 @@ var DriveClient = class {
   }
   async req(url, opts = {}) {
     var _a;
-    if (!url.startsWith(API + "/") && !url.startsWith(UPLOAD + "/")) throw new Error("Invalid API destination");
+    if (![API, UPLOAD, WRITE_API, WRITE_UPLOAD].some((base) => url.startsWith(base + "/"))) throw new Error("Invalid API destination");
     const r = await (0, import_obsidian2.requestUrl)({
       url,
       method: (_a = opts.method) != null ? _a : "GET",
@@ -242,11 +245,8 @@ var DriveClient = class {
     return r;
   }
   async metadata(fileId) {
-    var _a;
     const r = await this.req(`${API}/files/${id(fileId)}?fields=${FIELDS}`);
-    const file = r.json;
-    file.etag = (_a = Object.entries(r.headers).find(([k]) => k.toLowerCase() === "etag")) == null ? void 0 : _a[1];
-    return file;
+    return r.json;
   }
   async list(query) {
     var _a;
@@ -343,14 +343,31 @@ Content-Type: application/octet-stream\r
     return r.json;
   }
   async updateFile(expected, data) {
-    const latest = await this.metadata(expected.id);
-    if (latest.trashed || latest.version !== expected.version) throw new Error("Drive changed since comparison; retry.");
-    if (!latest.etag) throw new Error("Google did not provide an ETag. Update refused to protect concurrent edits.");
+    var _a, _b;
+    const response = await this.req(`${WRITE_API}/files/${id(expected.id)}?fields=${WRITE_FIELDS}`);
+    const latest = response.json;
+    if (latest.id !== expected.id || !/^\d+$/.test(expected.version) || ((_a = latest.labels) == null ? void 0 : _a.trashed) || latest.version !== expected.version) throw new Error("Drive changed since comparison; retry.");
+    if (typeof latest.mimeType !== "string" || !latest.mimeType || latest.mimeType.startsWith("application/vnd.google-apps.")) throw new Error("Drive file type changed; update refused.");
+    if (typeof latest.etag !== "string" || !/^"[\x21\x23-\x7e]+"$/.test(latest.etag)) throw new Error("Google did not provide a valid Drive v2 ETag. Update refused to protect concurrent edits.");
     const r = await this.req(
-      `${UPLOAD}/files/${id(expected.id)}?uploadType=media&fields=${FIELDS}`,
-      { method: "PATCH", contentType: "application/octet-stream", body: data, etag: latest.etag }
+      `${WRITE_UPLOAD}/files/${id(expected.id)}?uploadType=media&newRevision=true&fields=${WRITE_FIELDS}`,
+      { method: "PUT", contentType: latest.mimeType, body: data, etag: latest.etag }
     );
-    return r.json;
+    const written = r.json;
+    if (written.id !== expected.id || typeof written.version !== "string" || !/^\d+$/.test(written.version) || BigInt(written.version) <= BigInt(expected.version)) throw new Error("Drive upload result could not be verified. Retry sync; local changes are preserved.");
+    const updated = {
+      id: written.id,
+      name: written.title,
+      mimeType: written.mimeType,
+      md5Checksum: written.md5Checksum,
+      modifiedTime: written.modifiedDate,
+      size: written.fileSize,
+      version: written.version,
+      trashed: (_b = written.labels) == null ? void 0 : _b.trashed
+    };
+    const verified = await this.download(updated);
+    if (await hash(verified) !== await hash(data)) throw new Error("Drive upload content could not be verified. Retry sync; local changes are preserved.");
+    return updated;
   }
 };
 

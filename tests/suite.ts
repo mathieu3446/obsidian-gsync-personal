@@ -10,6 +10,7 @@ import { TFile,requests,responses } from 'obsidian';
 const bytes=(s:string)=>new TextEncoder().encode(s).buffer;
 const text=(b:ArrayBuffer)=>new TextDecoder().decode(b);
 const rf=(name='note.md',version='1')=>({id:'id-'+name,name,mimeType:'application/octet-stream',version,size:'3',modifiedTime:'now'});
+const wf=(version='1')=>({id:'id-note.md',title:'note.md',mimeType:'text/markdown',version,fileSize:'3',modifiedDate:'now',labels:{trashed:false},etag:'"metadata-'+version+'"'});
 function fixture(local:Record<string,string>={},remote:Record<string,string>={}) {
   const files=new Map(Object.entries(local).map(([p,s])=>[p,new TFile(p,bytes(s))]));
   const remoteData=new Map(Object.entries(remote).map(([p,s])=>[p,bytes(s)]));
@@ -91,12 +92,16 @@ test('renamed bound folder is looked up by ID, never recreated',async()=>{
   assert.equal(await d.root('old-name','bound'),'bound');assert.equal(requests.length,1);assert.ok(requests[0].url.includes('/files/bound?'));
 });
 test('Drive updates refuse absent ETag and reject stale version',async()=>{
-  const d=new DriveClient(async()=>'token');const f=rf();responses.push({status:200,json:{...f},headers:{}});await assert.rejects(d.updateFile(f,bytes('new')),/ETag/);
-  responses.push({status:200,json:{...f,version:'2'},headers:{etag:'e'}});await assert.rejects(d.updateFile(f,bytes('new')),/changed/);
+  const d=new DriveClient(async()=>'token');const f=rf();requests.length=0;
+  responses.push({status:200,json:{...wf(),etag:undefined},headers:{}});await assert.rejects(d.updateFile(f,bytes('new')),/ETag/);
+  responses.push({status:200,json:wf('2'),headers:{}});await assert.rejects(d.updateFile(f,bytes('new')),/changed/);
+  assert.ok(requests.every(r=>r.method==='GET'));
 });
 test('Drive update sends conditional header and handles 412',async()=>{
   const d=new DriveClient(async()=>'token');const f=rf();requests.length=0;
-  responses.push({status:200,json:{...f},headers:{etag:'expected'}},{status:412});await assert.rejects(d.updateFile(f,bytes('new')),/changed/);assert.equal(requests[1].headers['If-Match'],'expected');
+  responses.push({status:200,json:wf(),headers:{}},{status:412});await assert.rejects(d.updateFile(f,bytes('new')),/changed/);
+  assert.equal(requests[1].headers['If-Match'],'"metadata-1"');assert.equal(requests[1].method,'PUT');
+  assert.equal(new URL(requests[1].url).pathname,'/upload/drive/v2/files/id-note.md');
 });
 test('raw Google error bodies never appear in errors',async()=>{
   const d=new DriveClient(async()=>'token');responses.push({status:403,text:'SECRET'});await assert.rejects(d.metadata('x'),e=>!String(e).includes('SECRET'));
@@ -184,4 +189,86 @@ test('Drive discovery remains bounded to configured folder even with full author
  responses.push({status:200,json:{files:[rf('created-by-another-app.md')]}});
  const tree=await d.listTree('bound-folder-id');assert.equal(tree.files.size,1);
  const query=new URL(requests[0].url).searchParams.get('q');assert.ok(query.includes("'bound-folder-id' in parents"));assert.ok(!query.includes("'root' in parents"));
+});
+
+test('existing Markdown link edit succeeds with JSON v2 ETag and no HTTP ETag header',async()=>{
+ responses.length=0;requests.length=0;const d=new DriveClient(async()=>'token');const content=bytes('hello [[Other note]]');
+ responses.push({status:200,json:wf(),headers:{}},{status:200,json:wf('2')},
+   {status:200,arrayBuffer:content},{status:200,json:rf('note.md','2')});
+ const updated=await d.updateFile(rf(),content);
+ assert.equal(updated.version,'2');assert.equal(updated.name,'note.md');assert.equal(updated.size,'3');
+ assert.equal(new URL(requests[0].url).pathname,'/drive/v2/files/id-note.md');
+ assert.ok(new URL(requests[0].url).searchParams.get('fields').includes('etag'));
+ assert.equal(requests[1].headers['If-Match'],'"metadata-1"');assert.equal(requests[1].contentType,'text/markdown');
+ assert.equal(new URL(requests[1].url).searchParams.get('newRevision'),'true');assert.equal(text(requests[1].body),'hello [[Other note]]');
+ assert.equal(requests.length,4);assert.equal(responses.length,0);
+});
+
+test('weak, wildcard and malformed ETags never produce a write',async()=>{
+ const d=new DriveClient(async()=>'token');
+ for(const etag of ['W/"weak"','*','', 'unquoted','"one", "two"','"bad\r\nheader"']) {
+   requests.length=0;responses.push({status:200,json:{...wf(),etag}});
+   await assert.rejects(d.updateFile(rf(),bytes('new')),/ETag/);assert.equal(requests.length,1);
+ }
+});
+
+test('trashed, wrong-ID and missing-version metadata abort before uploading',async()=>{
+ const d=new DriveClient(async()=>'token');
+ for(const metadata of [{...wf(),labels:{trashed:true}},{...wf(),id:'other-file'},{...wf(),version:undefined}]) {
+   requests.length=0;responses.push({status:200,json:metadata});
+   await assert.rejects(d.updateFile(rf(),bytes('new')),/changed/);assert.equal(requests.length,1);
+ }
+ requests.length=0;responses.push({status:200,json:{...wf(),version:undefined}});
+ await assert.rejects(d.updateFile({...rf(),version:undefined} as any,bytes('new')),/changed/);assert.equal(requests.length,1);
+});
+
+test('ambiguous upload response cannot checkpoint somebody else’s later version',async()=>{
+ const d=new DriveClient(async()=>'token');
+ for(const written of [{...wf(),version:undefined},{...wf('2'),id:'other'},wf(),wf('0')]) {
+   requests.length=0;responses.push({status:200,json:wf()},{status:200,json:written});
+   await assert.rejects(d.updateFile(rf(),bytes('new')),/could not be verified/);assert.equal(requests.length,2);
+ }
+});
+
+test('readback mismatch and remote edit during readback remain errors',async()=>{
+ const d=new DriveClient(async()=>'token');
+ responses.push({status:200,json:wf()},{status:200,json:wf('2')},
+   {status:200,arrayBuffer:bytes('wrong bytes')},{status:200,json:rf('note.md','2')});
+ await assert.rejects(d.updateFile(rf(),bytes('new')),/content could not be verified/);
+ responses.push({status:200,json:wf()},{status:200,json:wf('2')},
+   {status:200,arrayBuffer:bytes('other edit')},{status:200,json:rf('note.md','3')});
+ await assert.rejects(d.updateFile(rf(),bytes('new')),/changed during download/);
+});
+
+test('a second device writing after comparison gets 412 without losing local edit or checkpoint',async()=>{
+ responses.length=0;requests.length=0;
+ const f=fixture({'note.md':'local [[Link]]'},{'note.md':'old'});
+ f.state['note.md']={remoteId:'id-note.md',remoteVersion:'1',localHash:await hash(bytes('old'))};
+ const d=new DriveClient(async()=>'token');f.drive.updateFile=d.updateFile.bind(d);
+ responses.push({status:200,json:wf()},options=>{
+   // Another device wins after the metadata GET but before the conditional PUT.
+   f.remoteData.set('note.md',bytes('second device edit'));f.remoteFiles.set('note.md',rf('note.md','2'));
+   return {status:options.headers['If-Match']==='"metadata-2"'?200:412};
+ });
+ const result=await f.run();assert.equal(result.uploaded,0);assert.equal(result.errors.length,1);
+ assert.equal(text(f.files.get('note.md').data),'local [[Link]]');assert.equal(text(f.remoteData.get('note.md')),'second device edit');
+ assert.equal(f.state['note.md'].remoteVersion,'1');assert.ok(f.backups.size>=2);
+});
+
+test('two successive Markdown edits sync through DriveClient and preserve the previous bytes',async()=>{
+ responses.length=0;requests.length=0;const f=fixture({'note.md':'first [[Link]]'},{'note.md':'old'});
+ f.state['note.md']={remoteId:'id-note.md',remoteVersion:'1',localHash:await hash(bytes('old'))};
+ const d=new DriveClient(async()=>'token');f.drive.updateFile=d.updateFile.bind(d);
+ for(const [from,to,content] of [['1','2','first [[Link]]'],['2','3','second [[Other]]']]) {
+   f.files.get('note.md').data=bytes(content);
+   responses.push({status:200,json:wf(from)},options=>{
+     assert.equal(options.headers['If-Match'],wf(from).etag);f.remoteData.set('note.md',options.body);
+     f.remoteFiles.set('note.md',rf('note.md',to));return {status:200,json:wf(to)};
+   },{status:200,arrayBuffer:bytes(content)},{status:200,json:rf('note.md',to)});
+   const result=await f.run();assert.deepEqual(result.errors,[]);assert.equal(result.uploaded,1);
+   assert.equal(f.state['note.md'].remoteVersion,to);assert.equal(f.state['note.md'].localHash,await hash(bytes(content)));
+   assert.equal(text(f.remoteData.get('note.md')),content);
+ }
+ const saved=[...f.backups.entries()].filter(([p])=>p.endsWith('.bin')).map(([,data])=>text(data));
+ assert.ok(saved.includes('old'));assert.ok(saved.includes('first [[Link]]'));assert.equal(responses.length,0);
 });

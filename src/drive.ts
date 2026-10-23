@@ -1,17 +1,23 @@
 import { requestUrl, RequestUrlResponse } from "obsidian";
-import { safeSegment } from "./security";
+import { hash, safeSegment } from "./security";
 const API = "https://www.googleapis.com/drive/v3";
 const UPLOAD = "https://www.googleapis.com/upload/drive/v3";
+// Drive v3 File metadata has no ETag. Use v2 for the complete conditional
+// replacement (metadata AND upload), rather than passing a v2 tag to v3.
+const WRITE_API = "https://www.googleapis.com/drive/v2";
+const WRITE_UPLOAD = "https://www.googleapis.com/upload/drive/v2";
+const WRITE_FIELDS = "id,title,mimeType,md5Checksum,modifiedDate,fileSize,version,labels(trashed),etag";
 const FOLDER = "application/vnd.google-apps.folder";
 const FIELDS = "id,name,mimeType,md5Checksum,modifiedTime,size,version,trashed,appProperties";
-export interface RemoteFile { id: string; name: string; mimeType: string; md5Checksum?: string; modifiedTime: string; size?: string; version: string; trashed?: boolean; appProperties?: Record<string,string>; etag?: string }
+export interface RemoteFile { id: string; name: string; mimeType: string; md5Checksum?: string; modifiedTime: string; size?: string; version: string; trashed?: boolean; appProperties?: Record<string,string> }
+interface WriteFile { id: string; title: string; mimeType: string; md5Checksum?: string; modifiedDate: string; fileSize?: string; version: string; labels?: { trashed?: boolean }; etag?: string }
 export interface RemoteTree { files: Map<string, RemoteFile>; folders: Map<string,string> }
 const q = (s: string) => s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 const id = (s: string) => encodeURIComponent(s);
 export class DriveClient {
   constructor(private getToken: () => Promise<string>) {}
   private async req(url: string, opts: { method?: string; body?: string | ArrayBuffer; contentType?: string; etag?: string } = {}): Promise<RequestUrlResponse> {
-    if (!url.startsWith(API + "/") && !url.startsWith(UPLOAD + "/")) throw new Error("Invalid API destination");
+    if (![API, UPLOAD, WRITE_API, WRITE_UPLOAD].some(base => url.startsWith(base + "/"))) throw new Error("Invalid API destination");
     const r = await requestUrl({ url, method: opts.method ?? "GET", body: opts.body, contentType: opts.contentType,
       headers: { Authorization: `Bearer ${await this.getToken()}`, ...(opts.etag ? { "If-Match": opts.etag } : {}) }, throw: false });
     if (r.status >= 300) throw new Error(r.status === 412 ? "Drive file changed during sync. Retry." : `Drive API error ${r.status}.`);
@@ -19,9 +25,7 @@ export class DriveClient {
   }
   async metadata(fileId: string): Promise<RemoteFile> {
     const r = await this.req(`${API}/files/${id(fileId)}?fields=${FIELDS}`);
-    const file = r.json as RemoteFile;
-    file.etag = Object.entries(r.headers).find(([k]) => k.toLowerCase() === "etag")?.[1];
-    return file;
+    return r.json as RemoteFile;
   }
   private async list(query: string): Promise<RemoteFile[]> {
     const out: RemoteFile[] = []; let pageToken = ""; const seen = new Set<string>();
@@ -94,11 +98,23 @@ export class DriveClient {
     return r.json as RemoteFile;
   }
   async updateFile(expected: RemoteFile, data: ArrayBuffer): Promise<RemoteFile> {
-    const latest = await this.metadata(expected.id);
-    if (latest.trashed || latest.version !== expected.version) throw new Error("Drive changed since comparison; retry.");
-    if (!latest.etag) throw new Error("Google did not provide an ETag. Update refused to protect concurrent edits.");
-    const r = await this.req(`${UPLOAD}/files/${id(expected.id)}?uploadType=media&fields=${FIELDS}`,
-      { method:"PATCH",contentType:"application/octet-stream",body:data,etag:latest.etag });
-    return r.json as RemoteFile;
+    const response = await this.req(`${WRITE_API}/files/${id(expected.id)}?fields=${WRITE_FIELDS}`);
+    const latest = response.json as WriteFile;
+    if (latest.id !== expected.id || !/^\d+$/.test(expected.version) || latest.labels?.trashed || latest.version !== expected.version) throw new Error("Drive changed since comparison; retry.");
+    if (typeof latest.mimeType !== "string" || !latest.mimeType || latest.mimeType.startsWith("application/vnd.google-apps.")) throw new Error("Drive file type changed; update refused.");
+    // The v2 JSON ETag is the metadata validator, not the media download tag.
+    // Refuse weak tags, wildcard conditions and malformed header values.
+    if (typeof latest.etag !== "string" || !/^"[\x21\x23-\x7e]+"$/.test(latest.etag)) throw new Error("Google did not provide a valid Drive v2 ETag. Update refused to protect concurrent edits.");
+    const r = await this.req(`${WRITE_UPLOAD}/files/${id(expected.id)}?uploadType=media&newRevision=true&fields=${WRITE_FIELDS}`,
+      { method:"PUT",contentType:latest.mimeType,body:data,etag:latest.etag });
+    const written = r.json as WriteFile;
+    // Use the version in THIS write response. A later metadata request could
+    // already describe somebody else's edit and must never be checkpointed.
+    if (written.id !== expected.id || typeof written.version !== "string" || !/^\d+$/.test(written.version) || BigInt(written.version) <= BigInt(expected.version)) throw new Error("Drive upload result could not be verified. Retry sync; local changes are preserved.");
+    const updated: RemoteFile = { id:written.id, name:written.title, mimeType:written.mimeType, md5Checksum:written.md5Checksum,
+      modifiedTime:written.modifiedDate, size:written.fileSize, version:written.version, trashed:written.labels?.trashed };
+    const verified = await this.download(updated);
+    if (await hash(verified) !== await hash(data)) throw new Error("Drive upload content could not be verified. Retry sync; local changes are preserved.");
+    return updated;
   }
 }
