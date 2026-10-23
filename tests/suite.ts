@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { seal,unseal,hash,safePath } from '../src/security';
-import { prepareSignIn,exchangeCode,revokeToken,SCOPE } from '../src/auth';
+import { prepareSignIn,exchangeCode,refreshAccessToken,revokeToken,SCOPE } from '../src/auth';
 import { runSync } from '../src/sync';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import { DriveClient } from '../src/drive';
@@ -39,9 +39,9 @@ test('dangerous, hidden, Windows and config paths rejected',()=>{
   for(const p of ['../x','a/../x','a\\..\\x','.obsidian/plugins/x','CON.md','a/b:stream','/absolute','x.','x/constructor','settings/x']) assert.equal(safePath(p,'settings'),false,p);
   assert.equal(safePath('Notes/hello.md','.obsidian'),true);
 });
-test('OAuth scope restricted, PKCE S256, no vault name in state',async()=>{
+test('OAuth full Drive scope, PKCE S256, no vault name in state',async()=>{
   const p=await prepareSignIn('client','https://example.com/callback','SECRET-VAULT'); const u=new URL(p.url);
-  assert.equal(u.searchParams.get('scope'),SCOPE);assert.equal(SCOPE,'https://www.googleapis.com/auth/drive.file');
+  assert.equal(u.searchParams.get('scope'),SCOPE);assert.equal(SCOPE,'https://www.googleapis.com/auth/drive');
   assert.equal(u.searchParams.get('code_challenge_method'),'S256');assert.ok(!p.pending.state.includes('~'));
   await assert.rejects(prepareSignIn('client','http://example.com','vault'));
 });
@@ -49,9 +49,9 @@ test('revocation failure preserves error and uses Google endpoint',async()=>{
   requests.length=0;responses.push({status:500});await assert.rejects(revokeToken('TEST-TOKEN'));
   assert.equal(requests[0].url,'https://oauth2.googleapis.com/revoke');assert.equal(requests[0].method,'POST');
 });
-test('full Drive grant refused and revoked',async()=>{
-  responses.push({status:200,json:{access_token:'a',refresh_token:'r',expires_in:3600,scope:'https://www.googleapis.com/auth/drive'}},{status:200});
-  await assert.rejects(exchangeCode('c','s','code',{verifier:'v',state:'s',redirectUri:'https://example.com',createdAt:Date.now()}),/revoked/);
+test('full Drive grant accepted including legacy scope bundled by Google',async()=>{
+ responses.push({status:200,json:{access_token:'a',refresh_token:'r',expires_in:3600,scope:SCOPE+' https://www.googleapis.com/auth/drive.file'}});
+ const t=await exchangeCode('c','s','code',{verifier:'v',state:'s',redirectUri:'https://example.com',createdAt:Date.now()});assert.equal(t.refreshToken,'r');
 });
 test('missing remote file restored instead of deleting local note',async()=>{
   const f=fixture({'note.md':'old'});f.state['note.md']={remoteId:'gone',remoteVersion:'1',localHash:await hash(bytes('old'))};
@@ -156,4 +156,32 @@ test('long conflict filenames remain valid and preserve original extension',asyn
  const path='Folder/'+ 'a'.repeat(190)+'.md';const cp=conflictPath(path);
  assert.ok(cp.startsWith('Folder/'));assert.ok(cp.endsWith('.md'));assert.ok(safeSegment(cp.split('/').pop()));
  assert.notEqual(cp,conflictPath(path));
+});
+
+test('legacy encrypted credentials require explicit reauthorization before any API request',async()=>{
+ const p=new GSyncPlugin();p.credentials={clientId:'id',clientSecret:'secret',refreshToken:'legacy'};requests.length=0;
+ await assert.rejects(p.token(),/upgrade required/);assert.equal(requests.length,0);
+});
+test('limited OAuth grant fails without revoking authorizations on other devices',async()=>{
+ responses.length=0;requests.length=0;responses.push({status:200,json:{access_token:'a',refresh_token:'r',expires_in:3600,scope:'https://www.googleapis.com/auth/drive.file'}});
+ await assert.rejects(exchangeCode('c','s','code',{verifier:'v',state:'s',redirectUri:'https://example.com',createdAt:Date.now()}),/Full Drive/);
+ assert.equal(requests.length,1);assert.ok(!requests.some(r=>r.url.includes('revoke')));
+});
+test('full Drive refresh works and unrelated scopes remain rejected',async()=>{
+ responses.push({status:200,json:{access_token:'a',expires_in:3600,scope:SCOPE}});assert.equal((await refreshAccessToken('c','s','r')).accessToken,'a');
+ responses.push({status:200,json:{access_token:'a',expires_in:3600,scope:SCOPE+' https://www.googleapis.com/auth/gmail.readonly'}});
+ await assert.rejects(refreshAccessToken('c','s','r'),/Unexpected/);
+});
+test('successful reauthorization persists the full-access marker only inside encrypted credentials',async()=>{
+ const p=new GSyncPlugin();p.credentials={clientId:'id',clientSecret:'secret',refreshToken:'old'};p.password='a long test passphrase';p.pending={state:'correct',verifier:'v',redirectUri:'https://example.com',createdAt:Date.now()};p.tab={display(){}};
+ responses.push({status:200,json:{access_token:'a',refresh_token:'new-secret-token',expires_in:3600,scope:SCOPE}});
+ await p.finishSignIn({state:'correct',code:'code'});
+ assert.equal(p.credentials.driveAccess,'full');assert.equal((await unseal(p.encrypted,p.password)).refreshToken,'new-secret-token');
+ assert.ok(!JSON.stringify(p.saved).includes('new-secret-token'));assert.equal(p.settings.remoteFolderId,'');
+});
+test('Drive discovery remains bounded to configured folder even with full authorization',async()=>{
+ responses.length=0;requests.length=0;const d=new DriveClient(async()=>'full-token');
+ responses.push({status:200,json:{files:[rf('created-by-another-app.md')]}});
+ const tree=await d.listTree('bound-folder-id');assert.equal(tree.files.size,1);
+ const query=new URL(requests[0].url).searchParams.get('q');assert.ok(query.includes("'bound-folder-id' in parents"));assert.ok(!query.includes("'root' in parents"));
 });

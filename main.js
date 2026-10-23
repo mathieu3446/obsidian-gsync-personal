@@ -29,7 +29,13 @@ var import_obsidian5 = require("obsidian");
 var import_obsidian = require("obsidian");
 var AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 var TOKEN_URL = "https://oauth2.googleapis.com/token";
-var SCOPE = "https://www.googleapis.com/auth/drive.file";
+var SCOPE = "https://www.googleapis.com/auth/drive";
+function validateScope(scope) {
+  if (scope === void 0) return;
+  const scopes = scope.split(/\s+/).filter(Boolean);
+  if (!scopes.includes(SCOPE)) throw new Error("Full Drive access required. Sign in again to upgrade the previous limited permission.");
+  if (scopes.some((s) => s !== SCOPE && s !== "https://www.googleapis.com/auth/drive.file")) throw new Error("Unexpected Google permissions. Use the dedicated GSync OAuth client.");
+}
 var DEFAULT_REDIRECT = "https://mathieu3446.github.io/obsidian-gsync-personal/callback.html";
 var PROTOCOL_ACTION = "gsync-personal-auth";
 var PENDING_TTL_MS = 15 * 60 * 1e3;
@@ -84,10 +90,7 @@ async function exchangeCode(clientId, clientSecret, code, pending) {
   });
   if (r.status !== 200) throw new Error(`Token exchange failed (${r.status}). Check OAuth configuration.`);
   const j = r.json;
-  if (j.scope && j.scope.split(" ").some((scope) => scope && scope !== SCOPE)) {
-    await revokeToken(j.refresh_token || j.access_token);
-    throw new Error("Old full-Drive permission detected and revoked. Use a dedicated OAuth client, then sign in again.");
-  }
+  validateScope(j.scope);
   if (!j.refresh_token) {
     throw new Error("Google did not return a refresh token. Remove the app at myaccount.google.com/permissions and sign in again.");
   }
@@ -122,10 +125,7 @@ async function refreshAccessToken(clientId, clientSecret, refreshToken) {
     throw new Error(`Token refresh failed (${r.status}). Sign in again.`);
   }
   const j = r.json;
-  if (j.scope && j.scope.split(" ").some((scope) => scope && scope !== SCOPE)) {
-    await revokeToken(refreshToken);
-    throw new Error("Unexpected Google permissions revoked. Use a dedicated OAuth client.");
-  }
+  validateScope(j.scope);
   return { accessToken: j.access_token, expiresAt: Date.now() + (j.expires_in - 60) * 1e3 };
 }
 async function revokeToken(token) {
@@ -373,7 +373,7 @@ var GSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
       }
     };
     new import_obsidian3.Setting(el).setName("GSync Personal").setHeading();
-    el.createEl("p", { text: "Restricted Google access. No automatic deletions. Credentials are encrypted locally; unlock after each restart. Notes uploaded to Drive are not end-to-end encrypted." });
+    el.createEl("p", { text: "Full Google Drive permission; this plugin synchronizes only the bound folder. No automatic deletions. Credentials are encrypted locally; unlock after each restart. Notes uploaded to Drive are not end-to-end encrypted." });
     el.createEl("p", { text: this.plugin.unlocked ? this.plugin.signedIn ? "Unlocked \u2022 Google connected" : "Unlocked \u2022 Google not connected" : "Locked" });
     if (this.plugin.encrypted && !this.plugin.unlocked) {
       let pass = "";
@@ -405,7 +405,7 @@ var GSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
         })));
       }
       if (this.plugin.unlocked) {
-        if (!this.plugin.signedIn) new import_obsidian3.Setting(el).setName("Google sign-in").addButton((b) => b.setButtonText("Sign in with Google").onClick(() => void action(() => this.plugin.startSignIn())));
+        new import_obsidian3.Setting(el).setName("Google sign-in").setDesc("Copy your Bound folder ID before signing in again; restore it after authorization.").addButton((b) => b.setButtonText(this.plugin.signedIn ? "Sign in again" : "Sign in with Google").onClick(() => void action(() => this.plugin.startSignIn())));
         new import_obsidian3.Setting(el).setName("Lock locally").setDesc("Does not revoke Google access.").addButton((b) => b.setButtonText("Lock").onClick(() => void action(() => this.plugin.lock())));
         if (this.plugin.signedIn) new import_obsidian3.Setting(el).setName("Revoke Google access").setDesc("Revokes this authorization at Google, including other devices sharing it.").addButton((b) => b.setButtonText("Revoke and disconnect").onClick(() => void action(() => this.plugin.revoke())));
       }
@@ -721,7 +721,7 @@ var GSyncPlugin = class extends import_obsidian5.Plugin {
     try {
       if (params.error || !params.code) throw new Error("Google sign-in cancelled or incomplete.");
       const tokens = await exchangeCode(this.credentials.clientId, this.credentials.clientSecret, params.code, pending);
-      const next = { ...this.credentials, refreshToken: tokens.refreshToken };
+      const next = { ...this.credentials, refreshToken: tokens.refreshToken, driveAccess: "full" };
       this.encrypted = await seal(next, this.password);
       this.credentials = next;
       this.accessToken = tokens.accessToken;
@@ -729,7 +729,7 @@ var GSyncPlugin = class extends import_obsidian5.Plugin {
       this.state = /* @__PURE__ */ Object.create(null);
       this.settings.remoteFolderId = "";
       await this.saveAll();
-      new import_obsidian5.Notice("Google connected with restricted file access.");
+      new import_obsidian5.Notice("Google connected with full Drive permission. Restore your existing Bound folder ID before syncing.");
     } catch (e) {
       new import_obsidian5.Notice(e.message, 12e3);
     } finally {
@@ -758,6 +758,7 @@ var GSyncPlugin = class extends import_obsidian5.Plugin {
   async token() {
     var _a;
     if (!this.active || !((_a = this.credentials) == null ? void 0 : _a.refreshToken)) throw new Error("Credentials locked or Google disconnected.");
+    if (this.credentials.driveAccess !== "full") throw new Error("Permission upgrade required: use Sign in again in GSync Personal settings, then restore the existing folder ID.");
     if (!this.accessToken || Date.now() >= this.expiresAt) {
       const t = await refreshAccessToken(this.credentials.clientId, this.credentials.clientSecret, this.credentials.refreshToken);
       this.accessToken = t.accessToken;

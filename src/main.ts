@@ -4,7 +4,7 @@ import { DriveClient } from './drive';
 import { DEFAULT_SETTINGS, GSyncSettings, GSyncSettingTab } from './settings';
 import { runSync, SyncState } from './sync';
 import { seal, Sealed, unseal, safeSegment } from './security';
-interface Credentials { clientId: string; clientSecret: string; refreshToken: string }
+interface Credentials { clientId: string; clientSecret: string; refreshToken: string; driveAccess?: "full" }
 interface Data { schema: 2; settings: GSyncSettings; state: SyncState; credentials: Sealed | null }
 export default class GSyncPlugin extends Plugin {
   settings: GSyncSettings = { ...DEFAULT_SETTINGS };
@@ -93,12 +93,12 @@ export default class GSyncPlugin extends Plugin {
     try {
       if (params.error || !params.code) throw new Error('Google sign-in cancelled or incomplete.');
       const tokens = await exchangeCode(this.credentials.clientId,this.credentials.clientSecret,params.code,pending);
-      const next = {...this.credentials,refreshToken:tokens.refreshToken};
+      const next: Credentials = {...this.credentials,refreshToken:tokens.refreshToken,driveAccess:"full"};
       this.encrypted = await seal(next,this.password); this.credentials=next;
       this.accessToken=tokens.accessToken; this.expiresAt=tokens.expiresAt;
       // Never reuse comparison state when a different Google account may have been selected.
       this.state=Object.create(null); this.settings.remoteFolderId='';
-      await this.saveAll(); new Notice('Google connected with restricted file access.');
+      await this.saveAll(); new Notice('Google connected with full Drive permission. Restore your existing Bound folder ID before syncing.');
     } catch(e) { new Notice((e as Error).message,12000); }
     finally { this.signingIn=false; this.tab.display(); }
   }
@@ -114,6 +114,7 @@ export default class GSyncPlugin extends Plugin {
   }
   private async token() {
     if (!this.active || !this.credentials?.refreshToken) throw new Error('Credentials locked or Google disconnected.');
+    if(this.credentials.driveAccess!=='full') throw new Error('Permission upgrade required: use Sign in again in GSync Personal settings, then restore the existing folder ID.');
     if (!this.accessToken || Date.now() >= this.expiresAt) {
       const t=await refreshAccessToken(this.credentials.clientId,this.credentials.clientSecret,this.credentials.refreshToken);
       this.accessToken=t.accessToken; this.expiresAt=t.expiresAt;

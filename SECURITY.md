@@ -1,8 +1,8 @@
 # Security model
 
-This personal fork reduces permissions and accidental data loss. It is not certified malware-free and is not an end-to-end encrypted synchronization product.
+This personal fork reduces accidental data loss and encrypts stored credentials. It is not certified malware-free and is not an end-to-end encrypted synchronization product.
 
-- Google scope: drive.file; use a dedicated OAuth client shared only between your own devices.
+- Google scope: full drive access, explicitly chosen for a dedicated account. The API token can manage all accessible Drive files; the plugin traverses only the bound folder. This discovers files created by the user or other apps. Use a dedicated OAuth client shared only between your own devices.
 - Persistent credentials: AES-256-GCM with a 128-bit salt and 96-bit nonce; PBKDF2-SHA256, 600,000 iterations; passphrase never persisted. In-memory secrets cannot be protected against other code running inside Obsidian or a compromised OS.
 - No deletes. A missing file is restored from the other side. A missing bound root aborts.
 - Local text updates use Vault.process; binary remote changes are separate conflict copies.

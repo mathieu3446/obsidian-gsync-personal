@@ -2,8 +2,15 @@ import { requestUrl } from "obsidian";
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-// Restricted to files created or explicitly authorized for this OAuth app.
-export const SCOPE = "https://www.googleapis.com/auth/drive.file";
+// Full Drive permission discovers files added by users and other applications.
+// The synchronization code still traverses only the bound destination.
+export const SCOPE = "https://www.googleapis.com/auth/drive";
+function validateScope(scope?: string): void {
+  if (scope === undefined) return; // omitted scope means the requested scope was granted
+  const scopes=scope.split(/\s+/).filter(Boolean);
+  if(!scopes.includes(SCOPE)) throw new Error("Full Drive access required. Sign in again to upgrade the previous limited permission.");
+  if(scopes.some(s=>s!==SCOPE && s!=="https://www.googleapis.com/auth/drive.file")) throw new Error("Unexpected Google permissions. Use the dedicated GSync OAuth client.");
+}
 export const DEFAULT_REDIRECT = "https://mathieu3446.github.io/obsidian-gsync-personal/callback.html";
 export const PROTOCOL_ACTION = "gsync-personal-auth";
 const PENDING_TTL_MS = 15 * 60 * 1000;
@@ -50,7 +57,7 @@ export interface PreparedSignIn {
  * Builds the Google consent URL ahead of time. Mobile browsers only allow
  * opening a new page synchronously inside a tap, so the async crypto work
  * must be finished before the user taps "Sign in with Google".
- * The vault name rides along in `state` so the right vault is reopened.
+ * State contains no vault metadata.
  */
 export async function prepareSignIn(clientId: string, redirectUri: string, vaultName: string): Promise<PreparedSignIn> {
   const redirect = new URL(redirectUri);
@@ -104,10 +111,7 @@ export async function exchangeCode(
   });
   if (r.status !== 200) throw new Error(`Token exchange failed (${r.status}). Check OAuth configuration.`);
   const j = r.json as TokenResponse;
-  if (j.scope && j.scope.split(" ").some(scope => scope && scope !== SCOPE)) {
-    await revokeToken(j.refresh_token || j.access_token);
-    throw new Error("Old full-Drive permission detected and revoked. Use a dedicated OAuth client, then sign in again.");
-  }
+  validateScope(j.scope);
   if (!j.refresh_token) {
     throw new Error("Google did not return a refresh token. Remove the app at myaccount.google.com/permissions and sign in again.");
   }
@@ -147,10 +151,7 @@ export async function refreshAccessToken(
     throw new Error(`Token refresh failed (${r.status}). Sign in again.`);
   }
   const j = r.json as TokenResponse;
-  if (j.scope && j.scope.split(" ").some(scope => scope && scope !== SCOPE)) {
-    await revokeToken(refreshToken);
-    throw new Error("Unexpected Google permissions revoked. Use a dedicated OAuth client.");
-  }
+  validateScope(j.scope);
   return { accessToken: j.access_token, expiresAt: Date.now() + (j.expires_in - 60) * 1000 };
 }
 

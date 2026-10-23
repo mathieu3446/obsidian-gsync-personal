@@ -1,10 +1,23 @@
 # guide de mise en place
 
-Guide complet pour installer **GSync Personal 2.0.1** sur **PC Windows et iPhone**, avec **Google Drive** comme espace de synchronisation.
+Guide complet pour installer **GSync Personal 2.1.0** sur **PC Windows et iPhone**, avec **Google Drive** comme espace de synchronisation.
 
 Préparé le 22 octobre 2026 pour [mathieu3446/obsidian-gsync-personal](https://github.com/mathieu3446/obsidian-gsync-personal). Les menus peuvent légèrement varier selon la langue et la version.
 
 > Commence sur une copie du coffre. Les 30 tests automatisés utilisent des API simulées : ils ne remplacent pas les essais réels sur tes appareils. Une synchronisation ne remplace pas une sauvegarde indépendante.
+
+## Mise à jour depuis 2.0.1 : conserver le dossier existant
+
+1. Note le **Bound folder ID** actuel sur tes appareils et conserve une sauvegarde des notes.
+2. Mets l’intervalle automatique à **0** et arrête les synchronisations sur tous les appareils.
+3. Installe **2.1.0 sur le PC et l’iPhone avant de réautoriser Google**. Sur PC, remplace main.js et manifest.json, sans effacer data.json ; sur iPhone, mets à jour avec BRAT (si la version est figée, sélectionne 2.1.0).
+4. Dans le projet Google Cloud du client utilisé, ouvre **Google Auth Platform → Data Access** et déclare le scope **https://www.googleapis.com/auth/drive** à la place de drive.file. Garde ton compte parmi les utilisateurs tests si l’app reste en Testing.
+5. Sur chaque appareil, déverrouille GSync Personal puis clique **Sign in again**. Autorise l’accès étendu avec le même compte Google.
+6. Après chaque connexion, remets le **Bound folder ID noté à l’étape 1** et clique **Save settings**. Ne clique pas sur Create new destination.
+7. Ajoute un vrai fichier .md depuis Drive ou ChatGPT Work **dans ce dossier lié**, puis lance Sync : il doit être téléchargé dans Obsidian si son nom, son format et sa taille sont autorisés.
+8. Réactive éventuellement ton intervalle automatique, par exemple **3 minutes**, après avoir vérifié le bilan. Le déverrouillage reste manuel après redémarrage.
+
+L’accès Google peut désormais gérer tous les fichiers du compte ; le code de synchronisation ne parcourt que le dossier lié. Ce choix vise ici un compte Drive dédié au second cerveau. Le chiffrement AES-GCM des identifiants, la phrase secrète, PKCE, les copies de récupération et l’absence de suppressions automatiques sont conservés. Les notes sur Drive ne sont pas chiffrées de bout en bout.
 
 ## Sommaire
 
@@ -37,7 +50,7 @@ Tu as besoin de :
 
 - Obsidian sur PC : [téléchargement officiel](https://obsidian.md/download).
 - Obsidian sur iPhone depuis l’App Store, application publiée par **Dynalist Inc.**
-- Un compte Google avec de l’espace dans Drive, identique sur les deux appareils.
+- Un compte Google dédié au second cerveau, avec de l’espace dans Drive, identique sur les deux appareils.
 - Internet et un navigateur pour les connexions.
 - Un gestionnaire de mots de passe.
 - BRAT sur l’iPhone, installé à l’étape 6 depuis Obsidian.
@@ -69,7 +82,7 @@ Les notes dans Drive restent lisibles par Google et les personnes ayant accès a
 
 Un « coffre » est le dossier contenant tes notes Obsidian.
 
-Si tes notes sont déjà dans un ancien dossier Drive, pars d’une **copie locale sur PC**. Cette version ne parcourt pas librement tous les fichiers d’un ancien dossier Drive : elle crée sa propre destination avec une permission limitée.
+Si tes notes sont déjà dans un ancien dossier Drive, pars d’une **copie locale sur PC**. Cette version synchronise uniquement la destination liée par son ID. Place les ajouts de Drive ou ChatGPT Work dans cette destination, plutôt que dans un dossier séparé.
 
 Voir les [recommandations générales Obsidian sur la synchronisation](https://obsidian.md/help/Getting%20started/Sync%20your%20notes%20across%20devices).
 
@@ -104,15 +117,15 @@ Si Google demande des éléments supplémentaires, suis les indications adaptée
 
 Référence : [configuration du consentement OAuth](https://developers.google.com/workspace/guides/configure-oauth-consent).
 
-### 3.3 Déclarer la permission limitée
+### 3.3 Déclarer l’accès étendu à Drive
 
-Dans **Accès aux données / Data Access**, ouvre **Ajouter ou supprimer des champs d’application / Add or remove scopes**, si ce réglage est demandé. Recherche et sélectionne :
+Dans **Accès aux données / Data Access**, ouvre **Ajouter ou supprimer des champs d’application / Add or remove scopes**, puis déclare :
 
-    https://www.googleapis.com/auth/drive.file
+    https://www.googleapis.com/auth/drive
 
-Ce périmètre concerne les fichiers créés ou autorisés pour l’application. **N’ajoute pas la permission globale qui se termine simplement par /auth/drive.**
+Ce scope autorise techniquement la gestion de tous les fichiers Drive accessibles au compte. Il est nécessaire ici pour découvrir automatiquement les fichiers ajoutés dans la destination par toi ou par une autre application, comme ChatGPT Work. Le plugin parcourt seulement le dossier lié par **Bound folder ID** ; cette limitation vient de son code, pas du jeton Google.
 
-Le plugin demande lui-même drive.file à la connexion. Utilise un client dédié à ce fork plutôt que l’ancienne autorisation GSync qui donnait accès à tout Drive.
+La permission est classée « restricted » par Google. Pour tes essais personnels, garde ton compte comme utilisateur test. Les conditions de vérification pour une diffusion publique sont distinctes : l’accès étendu ne garantit pas une validation Google.
 
 Référence : [permissions Google Drive](https://developers.google.com/workspace/drive/api/guides/api-specific-auth).
 
@@ -148,8 +161,8 @@ Après les essais, tu peux examiner **Audience → Publier l’application / In 
 
 ### 4.1 Télécharger le ZIP installable
 
-1. Ouvre la [release 2.0.1](https://github.com/mathieu3446/obsidian-gsync-personal/releases/tag/2.0.1).
-2. Dans **Assets**, télécharge **gsync-personal-2.0.1.zip**.
+1. Ouvre la [release 2.1.0](https://github.com/mathieu3446/obsidian-gsync-personal/releases/tag/2.1.0).
+2. Dans **Assets**, télécharge **gsync-personal-2.1.0.zip**.
 3. N’utilise pas **Source code (zip)** : c’est le projet de développement.
 4. Clic droit sur le ZIP → **Extraire tout**.
 
@@ -182,7 +195,7 @@ Pas de sous-dossier supplémentaire entre **gsync-personal** et les fichiers. Si
 1. Relance Obsidian dans le coffre de test.
 2. Va dans **Paramètres → Extensions communautaires / Community plugins**.
 3. Si nécessaire, autorise les extensions communautaires en quittant le mode restreint d’Obsidian.
-4. Active **GSync Personal** et vérifie la version **2.0.1**.
+4. Active **GSync Personal** et vérifie la version **2.1.0**.
 5. Ouvre ses paramètres.
 
 Référence : [installation manuelle, projet exemple officiel Obsidian](https://github.com/obsidianmd/obsidian-sample-plugin#manually-installing-the-plugin).
@@ -263,10 +276,10 @@ Ne choisis pas un dossier de l’application Google Drive comme coffre. Le plugi
 
     mathieu3446/obsidian-gsync-personal
 
-4. Si une version est demandée, sélectionne **2.0.1**. L’installation à partir d’un tag permet de figer cette version pendant tes essais.
+4. Si une version est demandée, sélectionne **2.1.0**. L’installation à partir d’un tag permet de figer cette version pendant tes essais.
 5. Appuie sur **Add Plugin** et attends la confirmation.
 6. Retourne dans **Extensions communautaires**, actualise la liste si nécessaire, puis active **GSync Personal**.
-7. Vérifie la version **2.0.1**.
+7. Vérifie la version **2.1.0**.
 
 La release nécessaire est publiée. Aucun jeton GitHub personnel n’est nécessaire pour ce dépôt public. BRAT installe le plugin ; il ne synchronise pas tes notes.
 
@@ -290,7 +303,7 @@ Résultat attendu : les notes de test envoyées depuis PC apparaissent sur l’i
 
 Important : une nouvelle connexion Google réinitialise le lien de destination dans cette version. Renseigne donc le **Bound folder ID après la connexion**, puis enregistre. Une simple opération **Unlock** après redémarrage ne demande pas de refaire tout cela.
 
-Le texte d’aide du champ ID peut mentionner un remplissage après synchronisation : dans la version 2.0.1, sur le premier appareil, il est rempli à la **création de destination**.
+Le texte d’aide du champ ID peut mentionner un remplissage après synchronisation : dans la version 2.1.0, sur le premier appareil, il est rempli à la **création de destination**.
 
 Si iOS ferme Obsidian pendant la connexion, recommence depuis **Sign in with Google**. Les éléments temporaires de connexion restent seulement en mémoire.
 
@@ -356,12 +369,12 @@ Renommer ou déplacer le dossier Drive ne change pas son ID. S’il devient inac
 | Symptôme | Action |
 |---|---|
 | Plugin absent sur PC | Vérifie le bon coffre, le chemin exact, main.js et manifest.json sans double sous-dossier ; redémarre Obsidian |
-| BRAT refuse le dépôt | Utilise le nom exact du dépôt et 2.0.1 ; vérifie Internet et la release. Attends si GitHub impose une limite temporaire |
+| BRAT refuse le dépôt | Utilise le nom exact du dépôt et 2.1.0 ; vérifie Internet et la release. Attends si GitHub impose une limite temporaire |
 | Plugin verrouillé | **Passphrase → Unlock** avec la phrase secrète de cet appareil |
 | Mauvaise phrase secrète | Vérifie le mot de passe local, pas le mot de passe Google ; voir section 11 s’il est perdu |
 | redirect_uri_mismatch | Vérifie le client Application Web et l’URI exacte dans Google Cloud et dans le plugin, sans espace ni barre finale ajoutée |
 | access_denied / accès bloqué | Vérifie utilisateur test, compte choisi, audience et règles de l’organisation |
-| Ancienne permission globale détectée | Utilise un client/projet dédié au fork, sans reprendre l’autorisation de l’ancien GSync |
+| Permission upgrade required / Full Drive access required | Mets à jour tous les appareils, reconnecte-toi via Sign in again avec la permission drive, puis remets le dossier ID |
 | Pas de retour dans Obsidian | Appuie sur Revenir à Obsidian et ouvre le coffre qui a lancé la connexion ; si l’app a été arrêtée, recommence |
 | Lien de connexion en préparation | Attends un instant puis appuie à nouveau sur Sign in with Google |
 | No destination bound | Crée la destination sur le premier appareil seulement ; ailleurs colle son ID après connexion, puis Save settings |
@@ -422,7 +435,7 @@ Les anciennes sauvegardes du data.json de l’ancien GSync peuvent contenir des 
 ### Mises à jour
 
 - **PC manuel** : sauvegarde, ferme Obsidian, remplace main.js et manifest.json par ceux d’une même nouvelle release, puis redémarre. Conserve le data.json privé sauf instruction de migration spécifique.
-- **iPhone BRAT** : utilise sa recherche de mises à jour. Si tu as figé 2.0.1, change explicitement de version quand tu souhaites mettre à jour.
+- **iPhone BRAT** : utilise sa recherche de mises à jour. Si tu as figé 2.1.0, change explicitement de version quand tu souhaites mettre à jour.
 
 ## 12. Checklist finale
 
@@ -431,8 +444,8 @@ Les anciennes sauvegardes du data.json de l’ancien GSync peuvent contenir des 
 - [ ] Google Drive API activée dans le projet dédié.
 - [ ] Compte ajouté comme utilisateur test si nécessaire.
 - [ ] Client Application Web et URL de redirection exacte.
-- [ ] Permission drive.file.
-- [ ] GSync Personal 2.0.1 activé sur les deux appareils.
+- [ ] Permission étendue drive autorisée après mise à jour de tous les appareils.
+- [ ] GSync Personal 2.1.0 activé sur les deux appareils.
 - [ ] Même compte Google et même client ID/client secret.
 - [ ] Phrases secrètes conservées dans un gestionnaire de mots de passe.
 - [ ] Destination créée explicitement sur un seul appareil.
@@ -443,3 +456,4 @@ Les anciennes sauvegardes du data.json de l’ancien GSync peuvent contenir des 
 - [ ] Aucun secret, jeton ou data.json publié ou placé dans les notes synchronisées.
 
 **Ordre à retenir : Google Cloud → installation PC → connexion PC → création de destination → Sync PC → installation iPhone via BRAT → connexion iPhone → copie de l’ID → Sync iPhone → tests dans les deux sens.**
+

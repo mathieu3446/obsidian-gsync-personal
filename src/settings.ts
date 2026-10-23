@@ -9,7 +9,7 @@ export class GSyncSettingTab extends PluginSettingTab {
     const el=this.containerEl; el.empty();
     const action=async(fn:()=>Promise<void>|void)=>{try{await fn();}catch(e){new Notice((e as Error).message,12000);}};
     new Setting(el).setName('GSync Personal').setHeading();
-    el.createEl('p',{text:'Restricted Google access. No automatic deletions. Credentials are encrypted locally; unlock after each restart. Notes uploaded to Drive are not end-to-end encrypted.'});
+    el.createEl('p',{text:'Full Google Drive permission; this plugin synchronizes only the bound folder. No automatic deletions. Credentials are encrypted locally; unlock after each restart. Notes uploaded to Drive are not end-to-end encrypted.'});
     el.createEl('p',{text:this.plugin.unlocked ? (this.plugin.signedIn?'Unlocked • Google connected':'Unlocked • Google not connected') : 'Locked'});
     if(this.plugin.encrypted && !this.plugin.unlocked) {
       let pass='';
@@ -25,7 +25,7 @@ export class GSyncSettingTab extends PluginSettingTab {
         new Setting(el).setName('Store encrypted credentials').addButton(b=>b.setButtonText('Save credentials').onClick(()=>void action(async()=>{await this.plugin.configure(clientId,secret,password);secret='';password='';})));
       }
       if(this.plugin.unlocked) {
-        if(!this.plugin.signedIn) new Setting(el).setName('Google sign-in').addButton(b=>b.setButtonText('Sign in with Google').onClick(()=>void action(()=>this.plugin.startSignIn())));
+        new Setting(el).setName('Google sign-in').setDesc('Copy your Bound folder ID before signing in again; restore it after authorization.').addButton(b=>b.setButtonText(this.plugin.signedIn?'Sign in again':'Sign in with Google').onClick(()=>void action(()=>this.plugin.startSignIn())));
         new Setting(el).setName('Lock locally').setDesc('Does not revoke Google access.').addButton(b=>b.setButtonText('Lock').onClick(()=>void action(()=>this.plugin.lock())));
         if(this.plugin.signedIn) new Setting(el).setName('Revoke Google access').setDesc('Revokes this authorization at Google, including other devices sharing it.').addButton(b=>b.setButtonText('Revoke and disconnect').onClick(()=>void action(()=>this.plugin.revoke())));
       }

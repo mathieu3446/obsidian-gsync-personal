@@ -9,3 +9,7 @@ Retained MIT license and original attribution. Removed upstream donation UI beca
 ## 2.0.1
 
 Serialize credential setup/unlock against lock and sync; discard credential setup after unload. Bound destination required before sync; explicit uniquely named destination creation on first device. Shorten conflict basenames to retain valid remote filenames. Four regression tests added (30 total).
+
+## 2.1.0
+
+Use full Google Drive authorization at user request to discover files added manually or by other apps inside the bound folder. Keep AES-GCM credentials, passphrase handling, folder binding and no automatic deletion. Existing tokens require explicit reauthorization; no secret-storage or automatic-unlock change. Sign in again is available for connected accounts.

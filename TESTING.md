@@ -1,15 +1,17 @@
-# Validation — 2026-10-22
+# Validation — 2026-10-23
 
 - TypeScript strict compilation: passed.
-- 30 automated tests: passed.
+- 35 automated tests: passed.
 - npm audit: 0 known vulnerabilities in the selected dependency tree at verification time.
-- Tests cover encryption roundtrip, tampering, wrong passphrase, scope restrictions, PKCE, revocation, path validation, folder binding, deleted-file restoration, simultaneous edits, binary conflict copies, unique conflict names, case collisions, partial listings, ETag preconditions, invalid OAuth state and secret-free persistence.
+- Tests cover encryption roundtrip, tampering, wrong passphrase, scope validation, PKCE, revocation, path validation, folder binding, deleted-file restoration, simultaneous edits, binary conflict copies, unique conflict names, case collisions, partial listings, ETag preconditions, invalid OAuth state and secret-free persistence.
 
 These tests use fake Obsidian and Google APIs. They do not authenticate a real Google account or exercise an actual mobile Obsidian WebView. The software should first be tested on disposable notes.
 
+2.1.0 adds regression coverage for explicit permission migration, accepted full grants, rejected limited grants, encrypted migration metadata and folder-bound discovery.
+
 ## Private-account acceptance test
 
-1. Install into a copy of a vault; connect a new Google OAuth client with drive.file only.
+1. Install into a copy of a vault; connect a new Google OAuth client with full drive permission.
 2. Upload a disposable Markdown note; edit it locally and sync again (validates real Google ETag support).
 3. Edit that same note in Drive and sync back; verify local recovery snapshots.
 4. Connect a second test vault with the same OAuth client and exact folder ID; edit simultaneously on both devices and inspect conflict copies.

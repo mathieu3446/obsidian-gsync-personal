@@ -1,4 +1,6 @@
-# GSync Personal — version 2.0.1
+# GSync Personal — version 2.1.0
+
+> **Migration depuis 2.0.1 :** mets à jour tous les appareils, note ton Bound folder ID, déclare le scope `https://www.googleapis.com/auth/drive` dans Google Cloud, puis utilise **Sign in again** sur chaque appareil et rétablis cet ID. Le chiffrement des identifiants est conservé. [Étapes détaillées](guide%20de%20mise%20en%20placec.md).
 
 **Guide complet PC, iPhone et Google Drive : [guide de mise en placec](guide%20de%20mise%20en%20placec.md).**
 
@@ -6,13 +8,13 @@ Fork personnel de [GSync par dg0988](https://github.com/dg0988/ObsidianGSync), s
 
 ## Installation rapide
 
-1. Télécharge [le ZIP installable](downloads/gsync-personal-2.0.1.zip).
+1. Télécharge [le ZIP installable](downloads/gsync-personal-2.1.0.zip).
 2. Ferme Obsidian. Dans une **copie de ton coffre**, crée `.obsidian/plugins/gsync-personal/`.
 3. Extrais dans ce dossier `main.js`, `manifest.json` et `LICENSE` (sans sous-dossier supplémentaire).
 4. Relance Obsidian et active **GSync Personal** dans les extensions communautaires.
 5. Désactive l'ancien GSync et tout autre moteur de synchronisation pour ce coffre. Ce fork n'importe pas ses anciens paramètres ni ses jetons.
 
-Sur iPhone, installe BRAT depuis les extensions communautaires Obsidian, puis ajoute `mathieu3446/obsidian-gsync-personal` et sélectionne la release `2.0.1`. Les étapes détaillées sont dans le guide complet ci-dessus. L'archive de code source n'est pas le ZIP installable.
+Sur iPhone, installe BRAT depuis les extensions communautaires Obsidian, puis ajoute `mathieu3446/obsidian-gsync-personal` et sélectionne la release `2.1.0`. Les étapes détaillées sont dans le guide complet ci-dessus. L'archive de code source n'est pas le ZIP installable.
 
 ## Google : configuration initiale
 
@@ -33,7 +35,7 @@ En mode OAuth « test », Google peut faire expirer l'autorisation après sept j
 
 ## Dossier Drive et deuxième appareil
 
-Le plugin demande uniquement `drive.file`. Le bouton **Create new destination** crée explicitement un dossier dédié, dont le nom porte un suffixe unique. La synchronisation ne crée jamais de destination automatiquement. Il **ne peut pas importer arbitrairement tous les fichiers d'un ancien dossier Drive**. Pour migrer, place d'abord les notes à synchroniser dans le coffre local : ce plugin les enverra dans son propre dossier.
+Le plugin demande le scope étendu `drive` pour découvrir aussi les fichiers ajoutés manuellement ou par d’autres applications dans le dossier lié. Le jeton peut gérer tout le Drive ; le code de synchronisation ne parcourt que le dossier lié. Le bouton **Create new destination** crée explicitement un dossier dédié, dont le nom porte un suffixe unique. La synchronisation ne crée jamais de destination automatiquement. Les fichiers Markdown ajoutés par toi ou ChatGPT Work dans cette destination sont désormais découvrables. Un autre dossier Drive ne sera pas synchronisé automatiquement. Les limites de format, taille et nom restent appliquées.
 
 Après la création de la destination, copie l'ID affiché dans **Bound folder ID**. Sur le deuxième appareil, utilise le même compte Google et le même client OAuth, connecte-toi, puis renseigne cet ID avant la première synchronisation. La phrase secrète locale peut être différente sur chaque appareil.
 
@@ -41,7 +43,7 @@ Renommer ou déplacer le dossier Drive ne change pas l'ID mémorisé. S'il devie
 
 ## Ce qui a changé
 
-- Permission limitée aux fichiers accessibles à cette application (`drive.file`).
+- Autorisation Google étendue (`drive`) à la demande de l’utilisateur pour un compte dédié ; synchronisation limitée par le code à la destination liée.
 - Client secret et refresh token chiffrés localement en AES-256-GCM, avec clé dérivée de la phrase secrète par PBKDF2-SHA256 (600 000 itérations). Sel et nonce aléatoires.
 - Phrase secrète et vérificateur PKCE conservés uniquement en mémoire ; déverrouillage nécessaire après chaque redémarrage.
 - Aucun bouton pour copier le refresh token ; déconnexion par révocation Google effective. Un bouton distinct verrouille simplement l'appareil.
