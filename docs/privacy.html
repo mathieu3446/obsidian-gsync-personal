@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Politique de confidentialité — GSync Personal</title>
+<link rel="stylesheet" href="site.css"></head>
+<body><main>
+<a href="./">← GSync Personal</a><h1>Politique de confidentialité</h1>
+<p>Dernière mise à jour : 23 octobre 2026. Cette page décrit GSync Personal 2.1.1, le plugin personnel Obsidian du projet <a href="https://github.com/mathieu3446/obsidian-gsync-personal">mathieu3446/obsidian-gsync-personal</a>, et sa page de connexion GitHub Pages.</p>
+<h2>Données consultées et utilisation</h2>
+<p>Avec votre autorisation, le plugin lit les noms, identifiants, versions et contenus des fichiers de la destination Drive liée. Il les utilise pour comparer les fichiers aux notes locales, envoyer ou télécharger les changements et conserver des copies en cas de conflit. Les formats autorisés, exclusions et limites de taille sont configurables.</p>
+<p>Le périmètre demandé est <code>https://www.googleapis.com/auth/drive</code>. Le jeton donne techniquement accès à tous les fichiers Drive accessibles au compte autorisé. Le code de synchronisation parcourt uniquement le dossier lié par son identifiant ; cette restriction vient du plugin, pas de l’autorisation Google.</p>
+<h2>Identifiants et stockage local</h2>
+<p>L’identifiant client OAuth, le secret du client et le jeton de renouvellement sont conservés dans une enveloppe chiffrée locale, dans le fichier data.json du plugin. Le chiffrement utilise AES-256-GCM et une clé dérivée de la phrase secrète par PBKDF2-SHA256. La phrase secrète et le jeton d’accès actif restent en mémoire pendant l’utilisation ; la phrase secrète n’est pas sauvegardée.</p>
+<p>Les paramètres, l’identifiant du dossier, les chemins et empreintes des fichiers sont aussi mémorisés localement pour suivre la synchronisation. Un appareil compromis ou un autre code exécuté dans Obsidian peut accéder aux données utilisées par une session déverrouillée.</p>
+<h2>Notes, sauvegardes et conservation</h2>
+<p>Les notes sont conservées dans votre coffre et votre compte Google Drive. Elles ne sont pas chiffrées de bout en bout par ce plugin : Google et les personnes auxquelles vous donnez accès peuvent les lire. Le plugin enregistre aussi des copies locales de récupération en clair dans .gsync-personal-backups/.</p>
+<p>Le plugin ne purge pas automatiquement ces copies et ne propage pas automatiquement les suppressions. Les données restent présentes jusqu’à leur suppression par vous ou selon les règles de Google Drive. Une note supprimée d’un seul côté peut être restaurée depuis l’autre côté.</p>
+<h2>Transmission et hébergement</h2>
+<p>Les notes sont transférées directement entre le plugin sur votre appareil et Google via HTTPS. Le plugin n’intègre pas de serveur de collecte du mainteneur, de télémétrie ou de publicité. Il n’envoie pas vos notes au dépôt GitHub et ne les utilise pas pour entraîner un modèle d’intelligence artificielle.</p>
+<p>La connexion utilise une page statique GitHub Pages. GitHub reçoit les données techniques habituelles de la connexion, notamment l’adresse IP et l’URL initiale contenant le code OAuth temporaire. La page retire ce code de l’URL affichée et le transmet au plugin sur le même appareil. Elle ne reçoit ni phrase secrète ni jeton de renouvellement et n’intègre aucun script tiers. Les pratiques des hébergeurs sont décrites dans les <a href="https://policies.google.com/privacy">règles de confidentialité Google</a> et la <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">déclaration de confidentialité GitHub</a>.</p>
+<h2>Contrôle et retrait d’accès</h2>
+<p>Vous pouvez arrêter la synchronisation, verrouiller le plugin et révoquer l’autorisation avec « Revoke and disconnect » ou depuis les <a href="https://myaccount.google.com/connections">connexions du compte Google</a>. La révocation n’efface pas les notes ni les sauvegardes. Pour retirer les données, arrêtez la synchronisation sur tous vos appareils puis gérez les fichiers dans les coffres, les sauvegardes et Drive. Le fichier data.json peut être retiré après désactivation du plugin pour supprimer ses paramètres et identifiants locaux.</p>
+<h2>Contact et modifications</h2>
+<p>Le projet est maintenu par mathieu3446. Pour une question sur le fonctionnement ou la confidentialité, utilisez les <a href="https://github.com/mathieu3446/obsidian-gsync-personal/issues">demandes du projet GitHub</a>. Cet espace est public : n’y publiez aucune note privée, aucun secret ni jeton. Cette page doit être actualisée si les traitements du plugin changent.</p>
+</main></body></html>

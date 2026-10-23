@@ -132,6 +132,21 @@ Si Google demande des éléments supplémentaires, suis les indications adaptée
 
 Référence : [configuration du consentement OAuth](https://developers.google.com/workspace/guides/configure-oauth-consent).
 
+### 3.2.1 Compléter la personnalisation avant de quitter le mode test
+
+Si Google demande le nom, l’adresse d’assistance, la page d’accueil et la politique de confidentialité, ouvre **Google Auth Platform → Personnalisation / Branding** :
+
+- **Nom de l’application :** GSync Personal, ou GSync Personal Mathieu.
+- **Adresse d’assistance :** sélectionne ton adresse Google dans la liste proposée. Renseigne aussi ton adresse de contact développeur si elle est demandée.
+- **Page d’accueil :** https://mathieu3446.github.io/obsidian-gsync-personal/
+- **Politique de confidentialité :** https://mathieu3446.github.io/obsidian-gsync-personal/privacy.html
+
+Enregistre, puis retourne dans **Audience** pour demander le passage **En production** après tes essais. Ces pages sont hébergées par GitHub Pages ; aucun serveur supplémentaire n’est nécessaire. Elles ne remplacent pas l’URI de redirection OAuth **callback.html**, qui doit rester inchangée dans le client Google et le plugin.
+
+Pour un usage personnel, la vérification des permissions bénéficie d’une exception ; un avertissement d’application non vérifiée peut rester. Si Google demande une validation du domaine ou affiche un autre blocage, relève le message exact : ne déclare pas un domaine que tu ne contrôles pas. Passer en production ne publie pas le plugin dans le catalogue Obsidian, mais retire la restriction aux seuls utilisateurs tests.
+
+Référence : [personnalisation OAuth Google](https://support.google.com/cloud/answer/15549049).
+
 ### 3.3 Déclarer l’accès étendu à Drive
 
 Dans **Accès aux données / Data Access**, ouvre **Ajouter ou supprimer des champs d’application / Add or remove scopes**, puis déclare :
