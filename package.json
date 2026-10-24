@@ -1,6 +1,6 @@
 {
   "name": "obsidian-gsync-personal",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Personal hardened fork of GSync",
   "main": "main.js",
   "license": "MIT",

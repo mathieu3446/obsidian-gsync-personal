@@ -10,7 +10,7 @@
 <p class="intro">Synchroniser les notes et pièces jointes d’un coffre Obsidian entre ses appareils, avec son propre compte Google Drive.</p>
 <p>Ce plugin personnel est maintenu par le compte GitHub mathieu3446. C’est un fork de GSync de dg0988, et non un produit officiel de Google ou d’Obsidian.</p>
 <h2>Fonctionnement</h2>
-<p>La connexion commence dans les paramètres du plugin. Après autorisation Google, le plugin échange directement avec Google Drive et synchronise uniquement le dossier lié par son identifiant. Il conserve des copies de récupération et ne propage pas les suppressions automatiquement.</p>
+<p>La connexion commence dans les paramètres du plugin. Après autorisation Google, le plugin échange directement avec Google Drive et synchronise uniquement le dossier lié par son identifiant. Il conserve des copies de récupération et propage les suppressions de fichiers déjà synchronisés via les corbeilles, tout en conservant les modifications concurrentes.</p>
 <h2>Accès et confidentialité</h2>
 <p>L’autorisation Google permet techniquement de gérer tout le Drive accessible au compte. Le parcours de synchronisation est limité au dossier choisi. Les identifiants sont chiffrés localement avec une phrase secrète.</p>
 <p>Les notes et copies de récupération restent lisibles : elles ne sont pas chiffrées de bout en bout. Ce site n’intègre ni publicité, ni outil d’analyse d’audience, ni script tiers.</p>

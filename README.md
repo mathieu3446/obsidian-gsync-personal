@@ -1,6 +1,6 @@
-# GSync Personal — version 2.1.1
+# GSync Personal — version 2.2.0
 
-> **Correctif 2.1.1 :** corrige le blocage « Google did not provide an ETag » lors de la modification d’une note existante (liens compris). Depuis 2.1.0, remplace uniquement main.js et manifest.json, ou sélectionne 2.1.1 dans BRAT. Conserve data.json ; aucune nouvelle connexion Google ni modification des autorisations n’est nécessaire.
+> **2.2.0 — suppressions synchronisées :** arrête les syncs et mets à jour tous tes appareils avant la première synchronisation. Conserve data.json, les identifiants et le même Bound folder ID. Les suppressions de fichiers déjà synchronisés passent par les corbeilles ; les modifications concurrentes sont conservées. Le dossier Drive reçoit un historique technique des suppressions et un marqueur qui bloque les versions 2.1.x. [Migration détaillée](guide%20de%20mise%20en%20placec.md).
 
 > **Migration depuis 2.0.1 :** mets à jour tous les appareils, note ton Bound folder ID, déclare le scope `https://www.googleapis.com/auth/drive` dans Google Cloud, puis utilise **Sign in again** sur chaque appareil et rétablis cet ID. Le chiffrement des identifiants est conservé. [Étapes détaillées](guide%20de%20mise%20en%20placec.md).
 
@@ -10,13 +10,13 @@ Fork personnel de [GSync par dg0988](https://github.com/dg0988/ObsidianGSync), s
 
 ## Installation rapide
 
-1. Télécharge [le ZIP installable](downloads/gsync-personal-2.1.1.zip).
+1. Télécharge [le ZIP installable](downloads/gsync-personal-2.2.0.zip).
 2. Ferme Obsidian. Dans une **copie de ton coffre**, crée `.obsidian/plugins/gsync-personal/`.
 3. Extrais dans ce dossier `main.js`, `manifest.json` et `LICENSE` (sans sous-dossier supplémentaire).
 4. Relance Obsidian et active **GSync Personal** dans les extensions communautaires.
 5. Désactive l'ancien GSync et tout autre moteur de synchronisation pour ce coffre. Ce fork n'importe pas ses anciens paramètres ni ses jetons.
 
-Sur iPhone, installe BRAT depuis les extensions communautaires Obsidian, puis ajoute `mathieu3446/obsidian-gsync-personal` et sélectionne la release `2.1.1`. Les étapes détaillées sont dans le guide complet ci-dessus. L'archive de code source n'est pas le ZIP installable.
+Sur iPhone, installe BRAT depuis les extensions communautaires Obsidian, puis ajoute `mathieu3446/obsidian-gsync-personal` et sélectionne la release `2.2.0`. Les étapes détaillées sont dans le guide complet ci-dessus. L'archive de code source n'est pas le ZIP installable.
 
 ## Google : configuration initiale
 
@@ -51,13 +51,19 @@ Renommer ou déplacer le dossier Drive ne change pas l'ID mémorisé. S'il devie
 - Aucun bouton pour copier le refresh token ; déconnexion par révocation Google effective. Un bouton distinct verrouille simplement l'appareil.
 - Redirection sur ta page GitHub Pages, sans nom du coffre, sans ressources tierces, sans télémétrie.
 - Dossier distant lié par ID ; chemin vide et noms de fichiers dangereux refusés.
-- **Aucune suppression automatique** : un fichier absent d'un côté est restauré depuis l'autre. Pour supprimer définitivement une note, arrêter la synchronisation sur tous les appareils et la retirer des deux côtés.
+- **Suppressions synchronisées et récupérables** : un fichier déjà synchronisé supprimé sur un appareil est mis à la corbeille Drive, puis à la corbeille locale des autres appareils. Une note nouvelle sans historique est importée normalement. Les modifications concurrentes sont conservées ; une absence non confirmée ou un accès refusé ne déclenche pas de suppression.
 - Comparaison SHA-256 du contenu local ; versions Drive ; copies de conflit aux noms uniques.
 - Avant remplacement, copie de récupération locale ; remplacement Markdown via l'opération atomique `Vault.process`.
 - Les changements binaires distants créent une copie de conflit au lieu d'écraser un fichier local existant. Examiner puis choisir manuellement la version à conserver.
 - Mises à jour Drive via l’API v2, conditionnées par l’ETag JSON et la version, puis vérifiées par relecture du contenu : si Google ne fournit pas l'ETag ou refuse la condition, le plugin s'arrête pour ce fichier au lieu d'écraser aveuglément.
 - Formats autorisés explicitement ; fichiers cachés, configuration et exécutables exclus par défaut. Limite de 25 Mo par fichier.
 - Dépendances de développement réduites, verrouillées et vérifiées. Actions GitHub épinglées sur des commits et accès en lecture seule.
+
+## Suppressions et compatibilité
+
+Mets à jour tous les appareils qui partagent une destination en 2.2.0 avant de synchroniser. La première sync prépare un dossier **GSync deletion history - …** dans Drive : ne le supprime pas et ne modifie pas ses fichiers techniques. Il contient des identifiants et empreintes, sans contenu de note, pour empêcher le retour de copies obsolètes. Il n’est pas téléchargé comme un dossier de notes. Les dossiers vides ne sont pas retirés automatiquement.
+
+Conserve data.json pendant la mise à jour. Pour restaurer une note supprimée, restaure le fichier original depuis la corbeille Drive puis synchronise. Si tu as perdu l’historique local et qu’une ancienne copie identique est détectée, le plugin la conserve localement et bloque son renvoi ; utilise la restauration Drive ou un nouveau nom. Une erreur 403/404 sans preuve de suppression arrête le traitement du fichier.
 
 ## Limites et récupération
 

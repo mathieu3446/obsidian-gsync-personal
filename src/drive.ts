@@ -6,21 +6,27 @@ const UPLOAD = "https://www.googleapis.com/upload/drive/v3";
 // replacement (metadata AND upload), rather than passing a v2 tag to v3.
 const WRITE_API = "https://www.googleapis.com/drive/v2";
 const WRITE_UPLOAD = "https://www.googleapis.com/upload/drive/v2";
-const WRITE_FIELDS = "id,title,mimeType,md5Checksum,modifiedDate,fileSize,version,labels(trashed),etag";
+const WRITE_FIELDS = "id,title,mimeType,md5Checksum,modifiedDate,fileSize,version,labels(trashed),parents(id),etag";
 const FOLDER = "application/vnd.google-apps.folder";
 const FIELDS = "id,name,mimeType,md5Checksum,modifiedTime,size,version,trashed,appProperties";
 export interface RemoteFile { id: string; name: string; mimeType: string; md5Checksum?: string; modifiedTime: string; size?: string; version: string; trashed?: boolean; appProperties?: Record<string,string> }
-interface WriteFile { id: string; title: string; mimeType: string; md5Checksum?: string; modifiedDate: string; fileSize?: string; version: string; labels?: { trashed?: boolean }; etag?: string }
-export interface RemoteTree { files: Map<string, RemoteFile>; folders: Map<string,string> }
+interface WriteFile { id: string; title: string; mimeType: string; md5Checksum?: string; modifiedDate: string; fileSize?: string; version: string; labels?: { trashed?: boolean }; parents?: {id:string}[]; etag?: string }
+export interface DeletionRecord { remoteId:string; pathHash:string; localHash:string }
+export interface RemoteTree { files: Map<string, RemoteFile>; folders: Map<string,string>; deletions:DeletionRecord[] }
 const q = (s: string) => s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 const id = (s: string) => encodeURIComponent(s);
+export class DriveApiError extends Error {
+  constructor(readonly status:number) { super(status===412?'Drive file changed during sync. Retry.':'Drive API error '+status+'.'); }
+}
 export class DriveClient {
+  private historyFolders:string[]=[];
+  private deletions:DeletionRecord[]=[];
   constructor(private getToken: () => Promise<string>) {}
   private async req(url: string, opts: { method?: string; body?: string | ArrayBuffer; contentType?: string; etag?: string } = {}): Promise<RequestUrlResponse> {
     if (![API, UPLOAD, WRITE_API, WRITE_UPLOAD].some(base => url.startsWith(base + "/"))) throw new Error("Invalid API destination");
     const r = await requestUrl({ url, method: opts.method ?? "GET", body: opts.body, contentType: opts.contentType,
       headers: { Authorization: `Bearer ${await this.getToken()}`, ...(opts.etag ? { "If-Match": opts.etag } : {}) }, throw: false });
-    if (r.status >= 300) throw new Error(r.status === 412 ? "Drive file changed during sync. Retry." : `Drive API error ${r.status}.`);
+    if (r.status >= 300) throw new DriveApiError(r.status);
     return r;
   }
   async metadata(fileId: string): Promise<RemoteFile> {
@@ -45,7 +51,23 @@ export class DriveClient {
     if (!safeSegment(name)) throw new Error("Enter one non-empty dedicated folder name, without slashes.");
     if (savedId) {
       const f = await this.metadata(savedId);
-      if (f.trashed || f.mimeType !== FOLDER || f.appProperties?.gsyncPersonal !== "1") throw new Error("Bound folder unavailable. Sync stopped; it will not be recreated automatically.");
+      if (f.id!==savedId || f.trashed || f.mimeType !== FOLDER || !["1","2"].includes(f.appProperties?.gsyncPersonal ?? "")) throw new Error("Bound folder unavailable. Sync stopped; it will not be recreated automatically.");
+      const journals=await this.list("'"+q(savedId)+"' in parents and trashed = false and mimeType = '"+FOLDER+"' and appProperties has { key='gsyncDeletionJournal' and value='1' }");
+      if(journals.some(j=>j.mimeType!==FOLDER || j.appProperties?.gsyncDeletionJournal!=='1')) throw new Error('Invalid deletion history folder.');
+      this.historyFolders=journals.map(j=>j.id);
+      if(!this.historyFolders.length) {
+        if(f.appProperties?.gsyncDeletionJournal==='1') throw new Error('Deletion history is missing. Restore its folder from Drive trash before syncing.');
+        const journal=await this.req(API+'/files?fields=id',{method:'POST',contentType:'application/json',body:JSON.stringify({name:'GSync deletion history - '+crypto.randomUUID(),mimeType:FOLDER,parents:[savedId],appProperties:{gsyncDeletionJournal:'1'}})});
+        const journalId=(journal.json as {id:string}).id;
+        if(!journalId) throw new Error('Deletion history could not be initialized.');
+        this.historyFolders=[journalId];
+      }
+      if(f.appProperties?.gsyncPersonal!=='2' || f.appProperties?.gsyncDeletionJournal!=='1') {
+        // Marker 2 makes older releases stop instead of restoring deleted notes.
+        const upgraded=await this.req(API+'/files/'+id(savedId)+'?fields='+FIELDS,{method:'PATCH',contentType:'application/json',body:JSON.stringify({appProperties:{gsyncPersonal:'2',gsyncDeletionJournal:'1'}})});
+        const root=upgraded.json as RemoteFile;
+        if(root.id!==savedId || root.appProperties?.gsyncPersonal!=='2' || root.appProperties?.gsyncDeletionJournal!=='1') throw new Error('Destination upgrade could not be verified.');
+      }
       return f.id;
     }
     throw new Error('No destination bound. Create a destination on ONE device in settings, then copy its folder ID to all other devices.');
@@ -58,7 +80,7 @@ export class DriveClient {
   async createFolder(name: string, parentId: string, root = false): Promise<string> {
     if (!safeSegment(name)) throw new Error("Unsafe folder name");
     const r = await this.req(`${API}/files?fields=id`, { method: "POST", contentType: "application/json",
-      body: JSON.stringify({ name, mimeType: FOLDER, parents: [parentId], ...(root ? { appProperties: { gsyncPersonal: "1" } } : {}) }) });
+      body: JSON.stringify({ name, mimeType: FOLDER, parents: [parentId], ...(root ? { appProperties: { gsyncPersonal: "2" } } : {}) }) });
     return (r.json as { id: string }).id;
   }
   async listTree(rootId: string): Promise<RemoteTree> {
@@ -69,6 +91,10 @@ export class DriveClient {
       if (visited.has(parent) || visited.size > 5000) throw new Error("Folder traversal limit reached.");
       visited.add(parent);
       for (const f of await this.list(`'${q(parent)}' in parents and trashed = false`)) {
+        if(parent===rootId && f.mimeType===FOLDER && f.appProperties?.gsyncDeletionJournal==='1') {
+          if(!this.historyFolders.includes(f.id)) this.historyFolders.push(f.id);
+          continue;
+        }
         if (!safeSegment(f.name)) throw new Error("Unsafe remote filename; sync stopped.");
         const path = prefix ? `${prefix}/${f.name}` : f.name;
         if (path.length > 1000 || path.split("/").length > 30) throw new Error("Remote path too deep.");
@@ -80,7 +106,29 @@ export class DriveClient {
         else if (!f.mimeType.startsWith("application/vnd.google-apps.")) files.set(path,f);
       }
     }
-    return { files, folders };
+    this.deletions=[];
+    for(const folderId of this.historyFolders) for(const marker of await this.list("'"+q(folderId)+"' in parents and trashed = false")) {
+      const p=marker.appProperties;
+      if(marker.mimeType===FOLDER || p?.gsyncDeleted!=='1' || !p.remoteId || p.remoteId.length>200 || !/^[A-Za-z0-9+/]{43}=$/.test(p.pathHash ?? '') || !/^[A-Za-z0-9+/]{43}=$/.test(p.localHash ?? '')) throw new Error('Invalid deletion history; sync stopped.');
+      this.deletions.push({remoteId:p.remoteId,pathHash:p.pathHash,localHash:p.localHash});
+    }
+    return { files, folders, deletions:this.deletions };
+  }
+  async recordDeletion(path:string, remoteId:string, localHash:string):Promise<void> {
+    if(!this.historyFolders.length) throw new Error('Deletion history is not initialized.');
+    const pathHash=await hash(new TextEncoder().encode(path).buffer);
+    if(this.deletions.some(d=>d.remoteId===remoteId && d.pathHash===pathHash && d.localHash===localHash)) return;
+    const marker=await this.req(API+'/files?fields=id',{method:'POST',contentType:'application/json',body:JSON.stringify({name:'Deletion '+crypto.randomUUID(),mimeType:'application/octet-stream',parents:[this.historyFolders[0]],appProperties:{gsyncDeleted:'1',remoteId,pathHash,localHash}})});
+    if(!(marker.json as {id:string}).id) throw new Error('Deletion history write could not be verified.');
+    this.deletions.push({remoteId,pathHash,localHash});
+  }
+  async trashFile(expected:RemoteFile,parentId:string):Promise<void> {
+    const latest=(await this.req(WRITE_API+'/files/'+id(expected.id)+'?fields='+WRITE_FIELDS)).json as WriteFile;
+    if(latest.id!==expected.id || !/^\d+$/.test(expected.version) || latest.version!==expected.version || latest.labels?.trashed || !latest.parents?.some(p=>p.id===parentId)) throw new Error('Drive changed or moved before deletion; retry.');
+    if(!latest.mimeType || latest.mimeType.startsWith('application/vnd.google-apps.')) throw new Error('Refusing to trash a folder or native Google document.');
+    if(typeof latest.etag!=='string' || !/^"[\x21\x23-\x7e]+"$/.test(latest.etag)) throw new Error('Valid Drive v2 ETag required before deletion.');
+    const trashed=(await this.req(WRITE_API+'/files/'+id(expected.id)+'/trash?fields='+WRITE_FIELDS,{method:'POST',etag:latest.etag})).json as WriteFile;
+    if(trashed.id!==expected.id || trashed.labels?.trashed!==true) throw new Error('Drive trash operation could not be verified. Retry sync.');
   }
   async download(file: RemoteFile): Promise<ArrayBuffer> {
     const r = await this.req(`${API}/files/${id(file.id)}?alt=media`);

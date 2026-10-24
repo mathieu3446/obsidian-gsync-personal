@@ -17,6 +17,7 @@ export default class GSyncPlugin extends Plugin {
   private pending: PendingAuth | null = null;
   private prepared: PreparedSignIn | null = null;
   private active = true;
+  private vaultReady=false;
   private busy = false;
   private signingIn = false;
   private credentialBusy = false;
@@ -35,6 +36,7 @@ export default class GSyncPlugin extends Plugin {
     this.addCommand({ id:'sync',name:'Sync now',callback:()=>void this.sync() });
     this.addCommand({ id:'lock',name:'Lock credentials',callback:()=>{ try { this.lock(); } catch(e) { new Notice((e as Error).message); } } });
     this.registerObsidianProtocolHandler(PROTOCOL_ACTION,p=>void this.finishSignIn(p));
+    this.app.workspace.onLayoutReady(()=>{if(this.active) this.vaultReady=true;});
     this.schedule();
   }
   onunload() { this.active = false; this.credentials = null; this.password = ''; this.accessToken = ''; this.pending = null; this.prepared = null; }
@@ -149,13 +151,14 @@ export default class GSyncPlugin extends Plugin {
   }
   async sync() {
     if(this.working) { new Notice('An operation is already running.'); return; }
+    if(!this.vaultReady) { new Notice('Wait for the vault to finish loading before syncing.'); return; }
     if(!this.signedIn) { new Notice('Unlock GSync Personal and connect Google in settings.'); return; }
     this.busy=true;
     try {
       const r=await runSync(this.app,new DriveClient(()=>this.token()),this.settings,this.state,{checkpoint:()=>this.saveAll(),cancelled:()=>!this.active});
-      new Notice(`GSync Personal: ${r.uploaded} uploaded, ${r.downloaded} downloaded, ${r.conflicts.length} conflict copies, ${r.skipped.length} skipped, ${r.errors.length} errors.`,10000);
+      new Notice(`GSync Personal: ${r.uploaded} uploaded, ${r.downloaded} downloaded, ${r.deletedLocal} local / ${r.deletedRemote} Drive files moved to trash, ${r.conflicts.length} conflict copies, ${r.skipped.length} skipped, ${r.errors.length} errors.`,10000);
       if(r.errors.length) new Notice(r.errors.slice(0,3).join('\n'),20000);
-      if(r.conflicts.length) new Notice('Both versions preserved. Review: '+r.conflicts.slice(0,3).join(', '),20000);
+      if(r.conflicts.length) new Notice('Conflicting edits preserved. Review: '+r.conflicts.slice(0,3).join(', '),20000);
     } catch(e) { new Notice((e as Error).message,15000); }
     finally { this.busy=false; if(this.active) this.tab.display(); }
   }

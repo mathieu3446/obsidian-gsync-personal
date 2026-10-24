@@ -1,10 +1,10 @@
 import { App, TFile } from "obsidian";
-import { DriveClient, RemoteFile } from "./drive";
+import { DriveApiError, DriveClient, RemoteFile } from "./drive";
 import type { GSyncSettings } from "./settings";
 import { hash, safePath, uniqueSuffix, conflictPath } from "./security";
 export interface SyncRecord { remoteId: string; remoteVersion: string; localHash: string }
 export type SyncState = Record<string,SyncRecord>;
-export interface SyncResult { uploaded: number; downloaded: number; conflicts: string[]; skipped: string[]; errors: string[] }
+export interface SyncResult { uploaded: number; downloaded: number; deletedLocal:number; deletedRemote:number; conflicts: string[]; skipped: string[]; errors: string[] }
 export interface SyncHooks { checkpoint: () => Promise<void>; cancelled: () => boolean }
 export function excluded(path: string, settings: GSyncSettings, configDir: string): boolean {
   if (!safePath(path,configDir)) return true;
@@ -16,12 +16,14 @@ export function excluded(path: string, settings: GSyncSettings, configDir: strin
 }
 export async function runSync(app: App, drive: DriveClient, settings: GSyncSettings, state: SyncState, hooks: SyncHooks): Promise<SyncResult> {
   const vault = app.vault;
-  const result: SyncResult = { uploaded:0, downloaded:0, conflicts:[], skipped:[], errors:[] };
+  const result: SyncResult = { uploaded:0, downloaded:0, deletedLocal:0, deletedRemote:0, conflicts:[], skipped:[], errors:[] };
   const check = () => { if (hooks.cancelled()) throw new Error('Sync cancelled.'); };
   check();
   const root = await drive.root(settings.remoteFolder,settings.remoteFolderId);
   if (!settings.remoteFolderId) { settings.remoteFolderId = root; await hooks.checkpoint(); }
   const tree = await drive.listTree(root);
+  const remoteById=new Map([...tree.files].map(([path,file])=>[file.id,path]));
+  const deletedIds=new Set(tree.deletions.map(d=>d.remoteId));
   const locals = vault.getFiles().filter(f=>!excluded(f.path,settings,vault.configDir));
   const canonical = new Map<string,string>();
   for (const path of [...locals.map(f=>f.path),...tree.files.keys()]) {
@@ -29,7 +31,7 @@ export async function runSync(app: App, drive: DriveClient, settings: GSyncSetti
     if (canonical.has(key) && canonical.get(key) !== path) throw new Error('Case/Unicode path collision; sync stopped.');
     canonical.set(key,path);
   }
-  const paths = [...new Set([...locals.map(f=>f.path),...tree.files.keys()])].sort();
+  const paths = [...new Set([...locals.map(f=>f.path),...tree.files.keys(),...Object.keys(state)])].sort();
   const maxBytes = Math.min(100, Math.max(1,settings.maxFileSizeMB)) * 1024 * 1024;
   const parents = async (path: string) => {
     let cur = '';
@@ -51,6 +53,7 @@ export async function runSync(app: App, drive: DriveClient, settings: GSyncSetti
     state[path] = { remoteId:r.id, remoteVersion:r.version, localHash:await hash(data) };
     await hooks.checkpoint();
   };
+  const forget=async(path:string)=>{delete state[path];await hooks.checkpoint();};
   const backup = async (path: string, data: ArrayBuffer) => {
     check(); const dir = '.gsync-personal-backups';
     if (!await vault.adapter.exists(dir)) await vault.adapter.mkdir(dir);
@@ -64,6 +67,12 @@ export async function runSync(app: App, drive: DriveClient, settings: GSyncSetti
     const remote = await upload(cp,data); await remember(cp,remote,data);
     result.conflicts.push(cp);
   };
+  const trashLocal=async(path:string,file:TFile,data:ArrayBuffer,expectedHash:string)=>{
+    await backup(path,data);check();
+    if(vault.getAbstractFileByPath(path)!==file || await hash(await vault.readBinary(file))!==expectedHash) throw new Error('Local note changed before deletion. Retry.');
+    // Use the vault trash on every platform, never permanent delete.
+    await vault.trash(file,false);result.deletedLocal++;await forget(path);
+  };
   for (const path of paths) {
     check();
     if (excluded(path,settings,vault.configDir)) continue;
@@ -76,14 +85,52 @@ export async function runSync(app: App, drive: DriveClient, settings: GSyncSetti
       if (ld && ld.byteLength > maxBytes) { result.skipped.push(path); continue; }
       const lh = ld ? await hash(ld) : '';
       const s = Object.prototype.hasOwnProperty.call(state,path) ? state[path] : undefined;
-      if (l && ld && !r) { const created = await upload(path,ld); await remember(path,created,ld); result.uploaded++; continue; }
-      if (!r) continue;
+      if (!r && s) {
+        const movedInside=remoteById.has(s.remoteId);
+        if(!movedInside) {
+          // A historical marker must not hide an explicit restore/move outside
+          // the vault. Only a proven 404 after a recorded deletion is accepted.
+          try {
+            const previous=await drive.metadata(s.remoteId);
+            if(!previous.trashed) throw new Error('Previous Drive file moved outside the destination or is unavailable. Local copy preserved.');
+          } catch(e) {
+            if(!(e instanceof DriveApiError && e.status===404 && deletedIds.has(s.remoteId))) throw e;
+          }
+          await drive.recordDeletion(path,s.remoteId,s.localHash);
+        }
+        if(l && ld) {
+          if(lh!==s.localHash) await conflict(path,ld); // edit versus deletion/move: preserve the edit under a new name
+          await trashLocal(path,l,ld,lh);
+        } else await forget(path);
+        continue;
+      }
+      if(l && ld && !r) {
+        const pathHash=await hash(new TextEncoder().encode(path).buffer);
+        if(tree.deletions.some(d=>d.pathHash===pathHash && d.localHash===lh)) throw new Error('Previously deleted copy detected. Restore the original from Drive trash or use a new filename; it was not re-uploaded.');
+        const created=await upload(path,ld);await remember(path,created,ld);result.uploaded++;continue;
+      }
+      if(!r) continue;
       const localChanged = !s || s.localHash !== lh;
       const remoteChanged = !s || s.remoteId !== r.id || s.remoteVersion !== r.version;
       if (l && !localChanged && !remoteChanged) continue;
       const rd = await drive.download(r); check();
       if (rd.byteLength > maxBytes) { result.skipped.push(path); continue; }
-      if (!l) { await parents(path); check(); await vault.createBinary(path,rd); await remember(path,r,rd); result.downloaded++; continue; }
+      if(!l && s && s.remoteId===r.id) {
+        if(await hash(rd)===s.localHash) {
+          await backup(path,rd);check();
+          if(vault.getAbstractFileByPath(path)) throw new Error('Local path reappeared before deletion. Retry.');
+          const folder=path.includes('/')?path.slice(0,path.lastIndexOf('/')):'';
+          const parentId=tree.folders.get(folder);
+          if(!parentId) throw new Error('Remote parent unavailable; deletion refused.');
+          await drive.trashFile(r,parentId);
+          // Append-only markers survive Drive trash retention and state resets.
+          await drive.recordDeletion(path,r.id,s.localHash);deletedIds.add(r.id);
+          result.deletedRemote++;await forget(path);continue;
+        }
+        // The other device edited after our last sync: keep that edit visibly.
+        await backup(path,rd);result.conflicts.push(path);
+      }
+      if (!l) { await parents(path); check(); if(vault.getAbstractFileByPath(path)) throw new Error('Local path changed during download. Retry.');await vault.createBinary(path,rd); await remember(path,r,rd); result.downloaded++; continue; }
       if (await hash(rd) === lh) { await remember(path,r,ld!); continue; }
       if (localChanged) {
         // Preserve the exact remote bytes before any remote replacement, even for a one-sided edit.

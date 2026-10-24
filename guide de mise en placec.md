@@ -1,31 +1,31 @@
 # guide de mise en place
 
-Guide complet pour installer **GSync Personal 2.1.1** sur **PC Windows et iPhone**, avec **Google Drive** comme espace de synchronisation.
+Guide complet pour installer **GSync Personal 2.2.0** sur **PC Windows et iPhone**, avec **Google Drive** comme espace de synchronisation.
 
 Préparé le 22 octobre 2026 pour [mathieu3446/obsidian-gsync-personal](https://github.com/mathieu3446/obsidian-gsync-personal). Les menus peuvent légèrement varier selon la langue et la version.
 
-> Commence sur une copie du coffre. Les 42 tests automatisés utilisent des API simulées : ils ne remplacent pas les essais réels sur tes appareils. Une synchronisation ne remplace pas une sauvegarde indépendante.
+> Commence sur une copie du coffre. Les 65 tests automatisés utilisent des API simulées : ils ne remplacent pas les essais réels sur tes appareils. Une synchronisation ne remplace pas une sauvegarde indépendante.
 
-## Correctif 2.1.1 : mise à jour depuis 2.1.0
+## Mise à jour 2.2.0 : supprimer sans faire revenir les notes
 
-Cette version corrige le refus d’envoyer une note modifiée lorsque Google ne fournit pas d’ETag dans les réponses v3. Le plugin récupère désormais l’ETag JSON avec Drive v2 et utilise la même version de l’API pour l’envoi conditionnel. Il conserve le type du fichier et vérifie les octets envoyés par relecture avant de mémoriser la synchronisation.
+1. Garde une sauvegarde indépendante du coffre et note ton **Bound folder ID**. Mets l’intervalle à **0** et termine les syncs sur **tous** les appareils partageant cette destination.
+2. Installe **2.2.0 sur tous les appareils avant de relancer Sync**. Sur PC manuel : ferme Obsidian, remplace seulement **main.js et manifest.json** dans **.obsidian/plugins/gsync-personal/**. Sur BRAT : change la version suivie en **2.2.0**. **Conserve data.json**, qui contient aussi l’historique de comparaison nécessaire aux suppressions.
+3. Relance et déverrouille normalement. **Aucune reconnexion Google, aucun nouveau client OAuth ni nouveau dossier de destination n’est nécessaire depuis 2.1.x.** Conserve exactement le même ID.
+4. Lance Sync sur le PC, puis sur les autres appareils. La première synchronisation crée un dossier technique **GSync deletion history - …** dans la destination Drive et met à niveau son marqueur. Une ancienne version affichera alors une erreur de destination : mets-la à jour ; ne crée pas de nouvelle destination et ne tente pas de revenir en 2.1.x.
+5. Pour vérifier sur le coffre de test : crée deux notes jetables, synchronise tous les appareils, supprime les deux sur PC puis synchronise PC et iPhone. Elles doivent disparaître du coffre actif et ne pas réapparaître aux syncs suivantes. Recommence dans l’autre sens. Vérifie aussi les corbeilles avant de passer aux vraies suppressions.
+6. Réactive ton intervalle habituel après validation.
 
-1. Termine les transferts et garde une sauvegarde du coffre. Note ton **Bound folder ID** et mets l’intervalle automatique à **0** pendant la mise à jour.
-2. **PC manuel :** télécharge [gsync-personal-2.1.1.zip](https://github.com/mathieu3446/obsidian-gsync-personal/releases/download/2.1.1/gsync-personal-2.1.1.zip), extrais-le, ferme Obsidian, puis remplace seulement **main.js et manifest.json** dans le dossier **.obsidian/plugins/gsync-personal/** du coffre. **Conserve data.json.**
-3. **iPhone ou PC avec BRAT :** paramètres BRAT, bouton de modification du dépôt **mathieu3446/obsidian-gsync-personal**, sélectionne **2.1.1** et valide. Une version figée en 2.1.0 ne se met pas à jour avec la simple recherche de mises à jour.
-4. Relance Obsidian, vérifie la version **2.1.1**, puis déverrouille avec ta phrase secrète habituelle. **Depuis 2.1.0 déjà autorisée, aucune reconnexion Google ni modification de Google Cloud n’est nécessaire.** Conserve le même dossier ID ; ne crée pas une nouvelle destination.
-5. Sur une note de test déjà envoyée, ajoute **[[Autre note]]**, lance Sync, puis vérifie le contenu sur Drive et sur le deuxième appareil. Fais une seconde modification et recommence pour vérifier les mises à jour successives.
-6. Réactive ton intervalle habituel après ce test.
+Une suppression locale ne se propage que pour un fichier dont une version avait déjà été synchronisée. Si l’autre appareil a modifié la note, cette modification est conservée et un conflit est signalé. La suppression propagée sur l’appareil récepteur passe par la corbeille **.trash** d’Obsidian ; Drive reçoit une mise à la corbeille, jamais une suppression permanente par le plugin. Des copies de récupération sont enregistrées avant ces retraits.
 
-Si Google renvoie un véritable conflit de version (412), le plugin garde les modifications locales et demande de relancer. Une erreur de vérification ne doit pas être ignorée. Les 42 tests utilisent des services simulés ; l’essai réel sur tes appareils reste nécessaire.
+Ne supprime pas le dossier technique d’historique dans Drive : il empêche un appareil hors ligne de réenvoyer une ancienne copie, même après la purge de la corbeille Drive. Il contient des identifiants et empreintes, sans texte de note. Les notes et corbeilles restent soumises aux durées de conservation des services. Les anciens doublons présents avant la mise à jour ne sont pas effacés automatiquement : compare-les avant de les supprimer.
 
-Si tu viens encore de 2.0.1, suis aussi la migration d’autorisation ci-dessous.
+Les **65 tests automatisés utilisent des services simulés**. L’essai sur PC et iPhone reste nécessaire. Si tu viens de 2.0.1, suis également la migration d’autorisation ci-dessous.
 
 ## Mise à jour depuis 2.0.1 : conserver le dossier existant
 
 1. Note le **Bound folder ID** actuel sur tes appareils et conserve une sauvegarde des notes.
 2. Mets l’intervalle automatique à **0** et arrête les synchronisations sur tous les appareils.
-3. Installe **2.1.1 sur le PC et l’iPhone avant de réautoriser Google**. Sur PC, remplace main.js et manifest.json, sans effacer data.json ; sur iPhone, mets à jour avec BRAT (si la version est figée, sélectionne 2.1.1).
+3. Installe **2.2.0 sur le PC et l’iPhone avant de réautoriser Google**. Sur PC, remplace main.js et manifest.json, sans effacer data.json ; sur iPhone, mets à jour avec BRAT (si la version est figée, sélectionne 2.2.0).
 4. Dans le projet Google Cloud du client utilisé, ouvre **Google Auth Platform → Data Access** et déclare le scope **https://www.googleapis.com/auth/drive** à la place de drive.file. Garde ton compte parmi les utilisateurs tests si l’app reste en Testing.
 5. Sur chaque appareil, déverrouille GSync Personal puis clique **Sign in again**. Autorise l’accès étendu avec le même compte Google.
 6. Après chaque connexion, remets le **Bound folder ID noté à l’étape 1** et clique **Save settings**. Ne clique pas sur Create new destination.
@@ -191,8 +191,8 @@ Après les essais, tu peux examiner **Audience → Publier l’application / In 
 
 ### 4.1 Télécharger le ZIP installable
 
-1. Ouvre la [release 2.1.1](https://github.com/mathieu3446/obsidian-gsync-personal/releases/tag/2.1.1).
-2. Dans **Assets**, télécharge **gsync-personal-2.1.1.zip**.
+1. Ouvre la [release 2.2.0](https://github.com/mathieu3446/obsidian-gsync-personal/releases/tag/2.2.0).
+2. Dans **Assets**, télécharge **gsync-personal-2.2.0.zip**.
 3. N’utilise pas **Source code (zip)** : c’est le projet de développement.
 4. Clic droit sur le ZIP → **Extraire tout**.
 
@@ -225,7 +225,7 @@ Pas de sous-dossier supplémentaire entre **gsync-personal** et les fichiers. Si
 1. Relance Obsidian dans le coffre de test.
 2. Va dans **Paramètres → Extensions communautaires / Community plugins**.
 3. Si nécessaire, autorise les extensions communautaires en quittant le mode restreint d’Obsidian.
-4. Active **GSync Personal** et vérifie la version **2.1.1**.
+4. Active **GSync Personal** et vérifie la version **2.2.0**.
 5. Ouvre ses paramètres.
 
 Référence : [installation manuelle, projet exemple officiel Obsidian](https://github.com/obsidianmd/obsidian-sample-plugin#manually-installing-the-plugin).
@@ -306,10 +306,10 @@ Ne choisis pas un dossier de l’application Google Drive comme coffre. Le plugi
 
     mathieu3446/obsidian-gsync-personal
 
-4. Si une version est demandée, sélectionne **2.1.1**. L’installation à partir d’un tag permet de figer cette version pendant tes essais.
+4. Si une version est demandée, sélectionne **2.2.0**. L’installation à partir d’un tag permet de figer cette version pendant tes essais.
 5. Appuie sur **Add Plugin** et attends la confirmation.
 6. Retourne dans **Extensions communautaires**, actualise la liste si nécessaire, puis active **GSync Personal**.
-7. Vérifie la version **2.1.1**.
+7. Vérifie la version **2.2.0**.
 
 La release nécessaire est publiée. Aucun jeton GitHub personnel n’est nécessaire pour ce dépôt public. BRAT installe le plugin ; il ne synchronise pas tes notes.
 
@@ -333,7 +333,7 @@ Résultat attendu : les notes de test envoyées depuis PC apparaissent sur l’i
 
 Important : une nouvelle connexion Google réinitialise le lien de destination dans cette version. Renseigne donc le **Bound folder ID après la connexion**, puis enregistre. Une simple opération **Unlock** après redémarrage ne demande pas de refaire tout cela.
 
-Le texte d’aide du champ ID peut mentionner un remplissage après synchronisation : dans la version 2.1.1, sur le premier appareil, il est rempli à la **création de destination**.
+Le texte d’aide du champ ID peut mentionner un remplissage après synchronisation : dans la version 2.2.0, sur le premier appareil, il est rempli à la **création de destination**.
 
 Si iOS ferme Obsidian pendant la connexion, recommence depuis **Sign in with Google**. Les éléments temporaires de connexion restent seulement en mémoire.
 
@@ -382,24 +382,28 @@ Une minuterie ne garantit pas la synchronisation en arrière-plan sur iOS.
 | Your static sign-in page | URL GitHub Pages du guide | Doit correspondre exactement à Google Cloud |
 | Bound folder ID | Identique sur les appareils | Destination réelle ; ne pas l’effacer pour contourner une erreur |
 
-Les formats initiaux incluent md, txt, canvas, pdf et plusieurs formats d’images/audio/vidéo. Les fichiers cachés et le dossier de configuration sont exclus. **Les plugins, réglages, thèmes et identifiants ne se synchronisent pas.**
+Les formats initiaux incluent md, txt, canvas, pdf et plusieurs formats d’images/audio/vidéo. Les fichiers cachés et le dossier de configuration sont exclus. **Les plugins, réglages, thèmes et identifiants ne se synchronisent pas. La corbeille locale .trash et les copies de récupération ne sont pas envoyées comme des notes.**
 
 Les fichiers Google Docs/Sheets/Slides sont ignorés. Les noms incompatibles avec Windows et les doublons peuvent bloquer le parcours distant. Les changements distants de binaires existants produisent des copies de conflit à examiner manuellement.
 
 ### Suppressions et renommages
 
-Cette version ne propage **aucune suppression automatique**. Un fichier supprimé uniquement sur un appareil peut revenir de Drive. Un renommage peut laisser revenir l’ancien nom.
+- Supprime une note déjà synchronisée dans Obsidian, puis lance Sync sur cet appareil et sur l’autre. La version Drive passe à la corbeille et les anciennes copies locales passent à la corbeille du coffre.
+- Une note nouvelle sans historique n’est pas prise pour une suppression : elle est envoyée ou téléchargée normalement.
+- Si une suppression rencontre une modification concurrente, le plugin conserve la modification. Il peut restaurer la note modifiée ou créer une copie de conflit ; lis le bilan avant de supprimer de nouveau.
+- Une ancienne copie identique détectée après perte de l’historique local est conservée localement mais son renvoi est bloqué. Pour une restauration volontaire, restaure l’original depuis la corbeille Drive, ou donne un nouveau nom à la copie locale.
+- Les renommages ordinaires sont réconciliés comme un changement de chemin. Les dossiers vides peuvent rester présents. Un fichier déplacé hors de la destination ou devenu inaccessible est conservé localement avec une erreur, plutôt que supprimé sur simple absence.
+- Ne supprime pas **GSync deletion history - …** et n’efface pas ses marqueurs. Si ce dossier manque, restaure-le depuis la corbeille Drive avant de reprendre.
+- Pour une suppression réellement définitive, arrête les syncs partout et gère aussi les corbeilles et copies de récupération ; leurs durées de conservation sont indépendantes.
 
-Pour supprimer définitivement un fichier : termine les opérations, mets l’intervalle à 0 sur tous les appareils et ferme Obsidian ; retire ensuite le fichier des deux coffres locaux et de la destination Drive avant de reprendre. Conserve une sauvegarde si nécessaire. Les copies de récupération peuvent encore contenir ce fichier.
-
-Renommer ou déplacer le dossier Drive ne change pas son ID. S’il devient inaccessible ou part à la corbeille, le plugin s’arrête : restaure d’abord la destination attendue au lieu d’en créer une autre.
+Renommer ou déplacer le dossier racine Drive ne change pas son ID. S’il devient inaccessible ou part à la corbeille, le plugin s’arrête : restaure la destination attendue.
 
 ## 10. Dépannage
 
 | Symptôme | Action |
 |---|---|
 | Plugin absent sur PC | Vérifie le bon coffre, le chemin exact, main.js et manifest.json sans double sous-dossier ; redémarre Obsidian |
-| BRAT refuse le dépôt | Utilise le nom exact du dépôt et 2.1.1 ; vérifie Internet et la release. Attends si GitHub impose une limite temporaire |
+| BRAT refuse le dépôt | Utilise le nom exact du dépôt et 2.2.0 ; vérifie Internet et la release. Attends si GitHub impose une limite temporaire |
 | Plugin verrouillé | **Passphrase → Unlock** avec la phrase secrète de cet appareil |
 | Mauvaise phrase secrète | Vérifie le mot de passe local, pas le mot de passe Google ; voir section 11 s’il est perdu |
 | redirect_uri_mismatch | Vérifie le client Application Web et l’URI exacte dans Google Cloud et dans le plugin, sans espace ni barre finale ajoutée |
@@ -416,7 +420,9 @@ Renommer ou déplacer le dossier Drive ne change pas son ID. S’il devient inac
 | Doublon / collision de casse | Sauvegarde les variantes, par exemple Note.md et note.md, puis donne-leur des noms distincts |
 | ETag absent / mise à jour refusée | Arrête les essais sur données importantes ; relève le message pour diagnostiquer l’intégration réelle |
 | Local note changed during download | Attends l’enregistrement et relance sans modifier la note pendant le transfert |
-| Copies conflict | Compare et combine les contenus avant de supprimer ; les binaires peuvent nécessiter un choix manuel |
+| Copies conflict | Compare et combine les contenus avant de supprimer ; une suppression face à une modification conserve cette dernière |
+| Deletion history is missing | Restaure le dossier technique GSync deletion history depuis la corbeille Drive ; ne crée pas une autre destination |
+| Previously deleted copy detected | Ancienne copie conservée localement mais non renvoyée. Restaure l’original dans la corbeille Drive ou utilise un nouveau nom |
 | iPhone interrompu | Garde Obsidian ouvert, écran allumé ; réduis le nombre/taille des fichiers et vérifie le bilan |
 
 Pour demander de l’aide : indique version du plugin, Windows/iOS, étape et message d’erreur. Masque les secrets, adresses personnelles et contenus privés. **Ne partage jamais data.json.**
@@ -465,7 +471,7 @@ Les anciennes sauvegardes du data.json de l’ancien GSync peuvent contenir des 
 ### Mises à jour
 
 - **PC manuel** : sauvegarde, ferme Obsidian, remplace main.js et manifest.json par ceux d’une même nouvelle release, puis redémarre. Conserve le data.json privé sauf instruction de migration spécifique.
-- **iPhone BRAT** : utilise sa recherche de mises à jour. Si tu as figé 2.1.1, change explicitement de version quand tu souhaites mettre à jour.
+- **iPhone BRAT** : utilise sa recherche de mises à jour. Si tu as figé 2.2.0, change explicitement de version quand tu souhaites mettre à jour.
 
 ## 12. Checklist finale
 
@@ -475,7 +481,7 @@ Les anciennes sauvegardes du data.json de l’ancien GSync peuvent contenir des 
 - [ ] Compte ajouté comme utilisateur test si nécessaire.
 - [ ] Client Application Web et URL de redirection exacte.
 - [ ] Permission étendue drive autorisée après mise à jour de tous les appareils.
-- [ ] GSync Personal 2.1.1 activé sur les deux appareils.
+- [ ] GSync Personal 2.2.0 activé sur les deux appareils.
 - [ ] Même compte Google et même client ID/client secret.
 - [ ] Phrases secrètes conservées dans un gestionnaire de mots de passe.
 - [ ] Destination créée explicitement sur un seul appareil.

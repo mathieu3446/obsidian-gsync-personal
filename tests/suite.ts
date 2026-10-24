@@ -4,7 +4,7 @@ import { seal,unseal,hash,safePath } from '../src/security';
 import { prepareSignIn,exchangeCode,refreshAccessToken,revokeToken,SCOPE } from '../src/auth';
 import { runSync } from '../src/sync';
 import { DEFAULT_SETTINGS } from '../src/settings';
-import { DriveClient } from '../src/drive';
+import { DriveApiError, DriveClient } from '../src/drive';
 import GSyncPlugin from '../src/main';
 import { TFile,requests,responses } from 'obsidian';
 const bytes=(s:string)=>new TextEncoder().encode(s).buffer;
@@ -15,19 +15,24 @@ function fixture(local:Record<string,string>={},remote:Record<string,string>={})
   const files=new Map(Object.entries(local).map(([p,s])=>[p,new TFile(p,bytes(s))]));
   const remoteData=new Map(Object.entries(remote).map(([p,s])=>[p,bytes(s)]));
   const remoteFiles=new Map(Object.keys(remote).map(p=>[p,rf(p)]));
+  const localTrash=new Map();const remoteTrash=new Map();const deletions=[];
   const backups=new Map(); const settings={...DEFAULT_SETTINGS,remoteFolderId:'bound-folder'};
   const state={}; let hook=()=>{}; let updateHook=()=>{};
   const vault={configDir:'.obsidian',getFiles:()=>[...files.values()],getAbstractFileByPath:(p:string)=>files.get(p),
     readBinary:async(f:any)=>f.data,createFolder:async()=>{},
     createBinary:async(p:string,d:ArrayBuffer)=>{assert.ok(!files.has(p),'must not overwrite existing file');files.set(p,new TFile(p,d));},
+    trash:async(f:any,system:boolean)=>{assert.equal(system,false);localTrash.set(f.path,f.data);files.delete(f.path);},
     process:async(f:any,fn:any)=>{hook();f.data=bytes(fn(text(f.data)));},
     adapter:{exists:async()=>true,mkdir:async()=>{},writeBinary:async(p:string,d:ArrayBuffer)=>backups.set(p,d),write:async(p:string,d:string)=>backups.set(p,d)}};
-  const drive={root:async()=>settings.remoteFolderId,listTree:async()=>({files:remoteFiles,folders:new Map([['',settings.remoteFolderId]])}),
+  const drive={root:async()=>settings.remoteFolderId,listTree:async()=>({files:remoteFiles,folders:new Map([['',settings.remoteFolderId]]),deletions}),
+    metadata:async(id:string)=>{const f=[...remoteFiles.values()].find(f=>f.id===id)??remoteTrash.get(id);if(!f)throw new DriveApiError(404);return f;},
+    recordDeletion:async(path:string,remoteId:string,localHash:string)=>{deletions.push({remoteId,localHash,pathHash:await hash(bytes(path))});},
+    trashFile:async(f:any,parentId:string)=>{const current=remoteFiles.get(f.name);assert.equal(current.version,f.version);remoteTrash.set(f.id,{...current,trashed:true});remoteFiles.delete(f.name);remoteData.delete(f.name);},
     createFolder:async()=> 'folder',download:async(f:any)=>remoteData.get(f.name),
     createFile:async(name:string,parent:string,d:ArrayBuffer)=>{remoteData.set(name,d);const r=rf(name);remoteFiles.set(name,r);return r;},
     updateFile:async(f:any,d:ArrayBuffer)=>{updateHook();remoteData.set(f.name,d);return {...f,version:'2'};}};
   const run=()=>runSync({vault} as any,drive as any,settings,state,{checkpoint:async()=>{},cancelled:()=>false});
-  return {files,remoteData,remoteFiles,backups,settings,state,vault,drive,run,setHook:(v:any)=>hook=v,setUpdateHook:(v:any)=>updateHook=v};
+  return {files,remoteData,remoteFiles,remoteTrash,localTrash,deletions,backups,settings,state,vault,drive,run,setHook:(v:any)=>hook=v,setUpdateHook:(v:any)=>updateHook=v};
 }
 test('credentials encrypted, random, authenticated and wrong password rejected',async()=>{
   const p='a long unique passphrase';const s={clientSecret:'secret-value',refreshToken:'refresh-value'};
@@ -54,9 +59,9 @@ test('full Drive grant accepted including legacy scope bundled by Google',async(
  responses.push({status:200,json:{access_token:'a',refresh_token:'r',expires_in:3600,scope:SCOPE+' https://www.googleapis.com/auth/drive.file'}});
  const t=await exchangeCode('c','s','code',{verifier:'v',state:'s',redirectUri:'https://example.com',createdAt:Date.now()});assert.equal(t.refreshToken,'r');
 });
-test('missing remote file restored instead of deleting local note',async()=>{
+test('missing unproven remote ID preserves local note without re-uploading',async()=>{
   const f=fixture({'note.md':'old'});f.state['note.md']={remoteId:'gone',remoteVersion:'1',localHash:await hash(bytes('old'))};
-  await f.run();assert.equal(text(f.files.get('note.md').data),'old');assert.equal(text(f.remoteData.get('note.md')),'old');
+  const r=await f.run();assert.equal(text(f.files.get('note.md').data),'old');assert.equal(f.remoteData.size,0);assert.equal(r.errors.length,1);
 });
 test('missing local file restored instead of deleting Drive file',async()=>{
   const f=fixture({}, {'note.md':'old'});const r=await f.run();assert.equal(r.downloaded,1);assert.equal(text(f.files.get('note.md').data),'old');
@@ -88,8 +93,8 @@ test('case collisions stop before transfers',async()=>{const f=fixture({'Note.md
 test('missing bound folder stops before reading or changing notes',async()=>{const f=fixture({'note.md':'a'});f.drive.root=async()=>{throw Error('unavailable');};await assert.rejects(f.run());assert.equal(f.remoteData.size,0);});
 test('blank root rejected before any request',async()=>{const d=new DriveClient(async()=>'token');requests.length=0;await assert.rejects(d.root('',''));assert.equal(requests.length,0);});
 test('renamed bound folder is looked up by ID, never recreated',async()=>{
-  const d=new DriveClient(async()=>'token');requests.length=0;responses.push({status:200,json:{id:'bound',name:'renamed',mimeType:'application/vnd.google-apps.folder',appProperties:{gsyncPersonal:'1'}},headers:{}});
-  assert.equal(await d.root('old-name','bound'),'bound');assert.equal(requests.length,1);assert.ok(requests[0].url.includes('/files/bound?'));
+  const d=new DriveClient(async()=>'token');requests.length=0;responses.push({status:200,json:{id:'bound',name:'renamed',mimeType:'application/vnd.google-apps.folder',appProperties:{gsyncPersonal:'2',gsyncDeletionJournal:'1'}},headers:{}},{status:200,json:{files:[{id:'journal',mimeType:'application/vnd.google-apps.folder',appProperties:{gsyncDeletionJournal:'1'}}]}});
+  assert.equal(await d.root('old-name','bound'),'bound');assert.equal(requests.length,2);assert.ok(requests[0].url.includes('/files/bound?'));
 });
 test('Drive updates refuse absent ETag and reject stale version',async()=>{
   const d=new DriveClient(async()=>'token');const f=rf();requests.length=0;
@@ -134,7 +139,7 @@ test('invalid OAuth state cannot exchange a token or discard valid pending state
 });
 test('failed initial persistence releases synchronization lock',async()=>{
   const p=new GSyncPlugin();p.credentials={clientId:'id',clientSecret:'secret',refreshToken:'token'};p.accessToken='access';p.expiresAt=Date.now()+100000;p.tab={display(){}};
-  p.saveData=async()=>{throw Error('Disk full');};p.app={vault:{}};
+  p.saveData=async()=>{throw Error('Disk full');};p.app={vault:{}};p.vaultReady=true;
   responses.push({status:200,json:{files:[{id:'new-root'}]}});
   await p.sync();assert.equal(p.working,false);
 });
@@ -271,4 +276,147 @@ test('two successive Markdown edits sync through DriveClient and preserve the pr
  }
  const saved=[...f.backups.entries()].filter(([p])=>p.endsWith('.bin')).map(([,data])=>text(data));
  assert.ok(saved.includes('old'));assert.ok(saved.includes('first [[Link]]'));assert.equal(responses.length,0);
+});
+
+async function baseline(f:any,path='note.md',content='old') {
+  f.state[path]={remoteId:f.remoteFiles.get(path)?.id??'id-'+path,remoteVersion:'1',localHash:await hash(bytes(content))};
+}
+const journal=(id='journal')=>({id,name:'GSync deletion history - '+id,mimeType:'application/vnd.google-apps.folder',appProperties:{gsyncDeletionJournal:'1'}});
+const rootFile=(legacy=false)=>({id:'bound',name:'Vault',mimeType:'application/vnd.google-apps.folder',appProperties:legacy?{gsyncPersonal:'1'}:{gsyncPersonal:'2',gsyncDeletionJournal:'1'}});
+
+test('deleting a synchronized note trashes Drive and does not recreate it on repeated sync',async()=>{
+ const f=fixture({}, {'note.md':'old'});await baseline(f);
+ const result=await f.run();assert.deepEqual(result.errors,[]);assert.equal(result.deletedRemote,1);assert.equal(result.downloaded,0);
+ assert.equal(f.remoteFiles.size,0);assert.equal(f.files.size,0);assert.equal(f.deletions.length,1);assert.ok(f.remoteTrash.has('id-note.md'));assert.ok(f.backups.size>=2);
+ const again=await f.run();assert.deepEqual(again.errors,[]);assert.equal(again.uploaded+again.downloaded,0);
+});
+
+test('several synchronized local deletions propagate in a single run',async()=>{
+ const f=fixture({}, {'a.md':'old','b.md':'old','c.md':'old'});
+ for(const p of f.remoteFiles.keys())await baseline(f,p);
+ const r=await f.run();assert.deepEqual(r.errors,[]);assert.equal(r.deletedRemote,3);assert.equal(f.remoteFiles.size,0);assert.equal(f.files.size,0);
+});
+
+test('two-device delete propagates to vault trash without a stale re-upload',async()=>{
+ const a=fixture({'note.md':'old'},{'note.md':'old'}),b=fixture({'note.md':'old'});await baseline(a);await baseline(b);
+ a.files.delete('note.md');assert.equal((await a.run()).deletedRemote,1);
+ const runB=()=>runSync({vault:b.vault} as any,a.drive as any,b.settings,b.state,{checkpoint:async()=>{},cancelled:()=>false});
+ const r=await runB();assert.deepEqual(r.errors,[]);assert.equal(r.deletedLocal,1);assert.equal(b.files.size,0);assert.equal(text(b.localTrash.get('note.md')),'old');
+ assert.deepEqual((await runB()).errors,[]);assert.equal(a.remoteFiles.size,0);
+});
+
+test('deletion versus changed remote content preserves the remote edit visibly',async()=>{
+ const f=fixture({}, {'note.md':'remote edit'});await baseline(f);f.remoteFiles.get('note.md').version='2';
+ const r=await f.run();assert.equal(r.deletedRemote,0);assert.equal(r.conflicts.length,1);assert.equal(text(f.files.get('note.md').data),'remote edit');assert.equal(f.deletions.length,0);
+});
+
+test('deletion versus offline local edit preserves a synchronized conflict copy',async()=>{
+ const f=fixture({'note.md':'offline edit'});await baseline(f);f.remoteTrash.set('id-note.md',{...rf(),trashed:true});
+ const r=await f.run();assert.deepEqual(r.errors,[]);assert.equal(r.deletedLocal,1);assert.equal(r.conflicts.length,1);
+ assert.equal(f.files.has('note.md'),false);assert.equal(text(f.files.get(r.conflicts[0]).data),'offline edit');assert.equal(text(f.remoteData.get(r.conflicts[0])),'offline edit');
+});
+
+test('recorded deletion still applies after Drive purges the original file',async()=>{
+ const f=fixture({'note.md':'old'});await baseline(f);await f.drive.recordDeletion('note.md','id-note.md',await hash(bytes('old')));
+ const r=await f.run();assert.deepEqual(r.errors,[]);assert.equal(r.deletedLocal,1);assert.equal(f.remoteFiles.size,0);
+});
+
+test('reset comparison state cannot resurrect an identical deleted copy',async()=>{
+ const f=fixture({'note.md':'old'});await f.drive.recordDeletion('note.md','original-id',await hash(bytes('old')));
+ const r=await f.run();assert.equal(r.uploaded,0);assert.equal(r.errors.length,1);assert.match(r.errors[0],/Previously deleted/);assert.equal(text(f.files.get('note.md').data),'old');assert.equal(f.remoteFiles.size,0);
+});
+
+test('new files without a baseline remain uploads/downloads, never guessed deletions',async()=>{
+ const f=fixture({'local.md':'new'},{'remote.md':'new'});const r=await f.run();assert.deepEqual(r.errors,[]);assert.equal(r.uploaded,1);assert.equal(r.downloaded,1);assert.equal(r.deletedLocal+r.deletedRemote,0);
+});
+
+test('remote permissions failure is not treated as a deletion even with a marker',async()=>{
+ const f=fixture({'note.md':'old'});await baseline(f);await f.drive.recordDeletion('note.md','id-note.md',await hash(bytes('old')));
+ f.drive.metadata=async()=>{throw new DriveApiError(403);};const r=await f.run();assert.equal(r.errors.length,1);assert.equal(r.deletedLocal,0);assert.ok(f.files.has('note.md'));
+});
+
+test('a recorded file restored outside the destination is preserved locally',async()=>{
+ const f=fixture({'note.md':'old'});await baseline(f);await f.drive.recordDeletion('note.md','id-note.md',await hash(bytes('old')));
+ f.drive.metadata=async()=>rf();const r=await f.run();assert.equal(r.errors.length,1);assert.equal(r.deletedLocal,0);assert.ok(f.files.has('note.md'));
+});
+
+test('local rename removes the old Drive path and uploads the new path',async()=>{
+ const f=fixture({'renamed.md':'old'},{'note.md':'old'});await baseline(f);const r=await f.run();assert.deepEqual(r.errors,[]);assert.equal(r.deletedRemote,1);assert.equal(r.uploaded,1);assert.deepEqual([...f.remoteFiles.keys()],['renamed.md']);
+});
+
+test('Drive rename moves the local path without deleting the renamed remote ID',async()=>{
+ const f=fixture({'note.md':'old'},{'renamed.md':'old'});await baseline(f);f.remoteFiles.get('renamed.md').id='id-note.md';
+ const r=await f.run();assert.deepEqual(r.errors,[]);assert.equal(r.deletedRemote,0);assert.equal(r.deletedLocal,1);assert.equal(r.downloaded,1);assert.equal(f.files.has('note.md'),false);assert.ok(f.files.has('renamed.md'));assert.equal(f.deletions.length,0);
+});
+
+test('explicitly restored live Drive file overrides historical deletion marker',async()=>{
+ const f=fixture({'note.md':'old'},{'note.md':'restored'});await baseline(f);f.remoteFiles.get('note.md').version='3';await f.drive.recordDeletion('note.md','id-note.md',await hash(bytes('old')));
+ const r=await f.run();assert.deepEqual(r.errors,[]);assert.equal(r.deletedLocal+r.deletedRemote,0);assert.equal(text(f.files.get('note.md').data),'restored');
+});
+
+test('failed recovery backup stops before trashing either side',async()=>{
+ const local=fixture({'note.md':'old'});await baseline(local);local.remoteTrash.set('id-note.md',{...rf(),trashed:true});
+ local.vault.adapter.writeBinary=async()=>{throw Error('Disk full');};const lr=await local.run();assert.equal(lr.deletedLocal,0);assert.ok(local.files.has('note.md'));
+ const remote=fixture({}, {'note.md':'old'});await baseline(remote);remote.vault.adapter.writeBinary=async()=>{throw Error('Disk full');};const rr=await remote.run();assert.equal(rr.deletedRemote,0);assert.ok(remote.remoteFiles.has('note.md'));
+});
+
+test('local edit during deletion recovery is not moved to trash',async()=>{
+ const f=fixture({'note.md':'old'});await baseline(f);f.remoteTrash.set('id-note.md',{...rf(),trashed:true});let reads=0;
+ f.vault.readBinary=async(file:any)=>{if(++reads===2)file.data=bytes('typed meanwhile');return file.data;};
+ const r=await f.run();assert.equal(r.deletedLocal,0);assert.equal(r.errors.length,1);assert.equal(text(f.files.get('note.md').data),'typed meanwhile');assert.ok(f.state['note.md']);
+});
+
+test('failed history write after Drive trash is retried without resurrection',async()=>{
+ const f=fixture({}, {'note.md':'old'});await baseline(f);const record=f.drive.recordDeletion;let fail=true;
+ f.drive.recordDeletion=async(...args:any[])=>{if(fail)throw Error('Network unavailable');return record(...args);};
+ const first=await f.run();assert.equal(first.errors.length,1);assert.ok(f.state['note.md']);assert.equal(f.remoteFiles.size,0);assert.equal(f.files.size,0);
+ fail=false;const next=await f.run();assert.deepEqual(next.errors,[]);assert.equal(f.deletions.length,1);assert.equal(f.files.size,0);assert.equal(f.state['note.md'],undefined);
+});
+
+test('conditional Drive trash checks parent, strong ETag and 412 without permanent DELETE',async()=>{
+ const d=new DriveClient(async()=>'token');requests.length=0;
+ responses.push({status:200,json:{...wf(),parents:[{id:'parent'}]}},{status:200,json:{...wf('2'),labels:{trashed:true}}});
+ await d.trashFile(rf(),'parent');assert.equal(requests[1].method,'POST');assert.ok(requests[1].url.includes('/drive/v2/files/id-note.md/trash?'));assert.equal(requests[1].headers['If-Match'],'"metadata-1"');assert.equal(requests[1].body,undefined);
+ responses.push({status:200,json:{...wf(),parents:[{id:'parent'}]}},{status:412});await assert.rejects(d.trashFile(rf(),'parent'),/changed/);
+ assert.ok(requests.every(r=>r.method!=='DELETE'));
+});
+
+test('missing validator, changed version and moved parent abort Drive trash before POST',async()=>{
+ const d=new DriveClient(async()=>'token');
+ for(const f of [{...wf(),parents:[{id:'elsewhere'}]},{...wf('2'),parents:[{id:'parent'}]},{...wf(),etag:undefined,parents:[{id:'parent'}]},{...wf(),mimeType:'application/vnd.google-apps.folder',parents:[{id:'parent'}]}]) {
+  requests.length=0;responses.push({status:200,json:f});await assert.rejects(d.trashFile(rf(),'parent'));assert.equal(requests.length,1);
+ }
+});
+
+test('legacy folder migration creates history before switching marker to reject old clients',async()=>{
+ const d=new DriveClient(async()=>'token');requests.length=0;
+ responses.push({status:200,json:rootFile(true)},{status:200,json:{files:[]}},{status:200,json:{id:'journal'}},{status:200,json:rootFile()});
+ assert.equal(await d.root('Vault','bound'),'bound');assert.equal(requests.length,4);
+ assert.equal(JSON.parse(requests[2].body).parents[0],'bound');assert.equal(JSON.parse(requests[3].body).appProperties.gsyncPersonal,'2');
+});
+
+test('missing established history folder fails closed instead of silently losing deletion records',async()=>{
+ const d=new DriveClient(async()=>'token');requests.length=0;responses.push({status:200,json:rootFile()},{status:200,json:{files:[]}});
+ await assert.rejects(d.root('Vault','bound'),/history is missing/);assert.equal(requests.length,2);
+});
+
+test('deletion history is metadata-only, append-only, idempotent and excluded from note paths',async()=>{
+ const d=new DriveClient(async()=>'token');requests.length=0;
+ responses.push({status:200,json:{files:[journal(),rf('real.md')]}},{status:200,json:{files:[]}});
+ const tree=await d.listTree('bound');assert.equal(tree.files.size,1);assert.ok(tree.files.has('real.md'));assert.equal(tree.folders.size,1);
+ responses.push({status:200,json:{id:'marker'}});const h=await hash(bytes('old'));await d.recordDeletion('Private note.md','file-id',h);await d.recordDeletion('Private note.md','file-id',h);
+ assert.equal(requests.length,3);const body=JSON.parse(requests[2].body);assert.equal(body.appProperties.gsyncDeleted,'1');assert.equal(body.appProperties.pathHash,await hash(bytes('Private note.md')));assert.ok(!requests[2].body.includes('Private note.md'));assert.equal(tree.deletions.length,1);
+});
+
+test('concurrent journal folders are merged and malformed history stops synchronization',async()=>{
+ const d=new DriveClient(async()=>'token');const props={gsyncDeleted:'1',remoteId:'old-id',pathHash:await hash(bytes('note.md')),localHash:await hash(bytes('old'))};
+ responses.push({status:200,json:{files:[journal('j1'),journal('j2')]}},{status:200,json:{files:[{id:'m1',mimeType:'application/octet-stream',appProperties:props}]}},{status:200,json:{files:[{id:'m2',mimeType:'application/octet-stream',appProperties:{...props,remoteId:'other-id'}}]}});
+ assert.equal((await d.listTree('bound')).deletions.length,2);
+ const bad=new DriveClient(async()=>'token');responses.push({status:200,json:{files:[journal()]}},{status:200,json:{files:[{id:'bad',mimeType:'application/octet-stream',appProperties:{gsyncDeleted:'1'}}]}});
+ await assert.rejects(bad.listTree('bound'),/Invalid deletion history/);
+});
+
+test('synchronization refuses to run before the vault is loaded',async()=>{
+ const p=new GSyncPlugin();p.credentials={clientId:'id',clientSecret:'secret',refreshToken:'token',driveAccess:'full'};requests.length=0;
+ await p.sync();assert.equal(requests.length,0);assert.equal(p.working,false);
 });

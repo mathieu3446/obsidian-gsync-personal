@@ -17,3 +17,7 @@ Use full Google Drive authorization at user request to discover files added manu
 ## 2.1.1
 
 Fix updates of existing files failing because Drive v3 metadata supplies no ETag. Read the JSON metadata ETag using v2 and perform the conditional media PUT on the v2 upload endpoint; never mix a v2 ETag with v3 uploads. Reject stale versions and absent, weak or malformed validators. Retain the current MIME type, create a new revision, use the upload response version and verify the uploaded bytes by downloading again before checkpointing. Seven additional regression tests (42 total), including consecutive Markdown link edits and a two-client race. No credential schema or OAuth permission changes from 2.1.0.
+
+## 2.2.0
+
+Synchronize previously observed deletions through Drive and vault trash with recovery snapshots. Verify versions, parent and strong v2 ETag before trashing Drive files. Preserve concurrent edits; do not infer a deletion from an unknown file, permission failure, unproven 404 or move outside the bound destination. Add an append-only metadata-only deletion journal, merge concurrent journals, refuse missing/corrupt history, and prevent identical stale uploads after comparison-state loss. Migrate destination marker to 2 so older clients fail closed; wait for vault layout readiness before sync. Empty directories remain. 65 mocked tests pass; live two-device acceptance remains necessary. No OAuth scope or credential schema changes.

@@ -221,14 +221,22 @@ var API = "https://www.googleapis.com/drive/v3";
 var UPLOAD = "https://www.googleapis.com/upload/drive/v3";
 var WRITE_API = "https://www.googleapis.com/drive/v2";
 var WRITE_UPLOAD = "https://www.googleapis.com/upload/drive/v2";
-var WRITE_FIELDS = "id,title,mimeType,md5Checksum,modifiedDate,fileSize,version,labels(trashed),etag";
+var WRITE_FIELDS = "id,title,mimeType,md5Checksum,modifiedDate,fileSize,version,labels(trashed),parents(id),etag";
 var FOLDER = "application/vnd.google-apps.folder";
 var FIELDS = "id,name,mimeType,md5Checksum,modifiedTime,size,version,trashed,appProperties";
 var q = (s) => s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 var id = (s) => encodeURIComponent(s);
+var DriveApiError = class extends Error {
+  constructor(status) {
+    super(status === 412 ? "Drive file changed during sync. Retry." : "Drive API error " + status + ".");
+    this.status = status;
+  }
+};
 var DriveClient = class {
   constructor(getToken) {
     this.getToken = getToken;
+    this.historyFolders = [];
+    this.deletions = [];
   }
   async req(url, opts = {}) {
     var _a;
@@ -241,7 +249,7 @@ var DriveClient = class {
       headers: { Authorization: `Bearer ${await this.getToken()}`, ...opts.etag ? { "If-Match": opts.etag } : {} },
       throw: false
     });
-    if (r.status >= 300) throw new Error(r.status === 412 ? "Drive file changed during sync. Retry." : `Drive API error ${r.status}.`);
+    if (r.status >= 300) throw new DriveApiError(r.status);
     return r;
   }
   async metadata(fileId) {
@@ -267,11 +275,29 @@ var DriveClient = class {
     return out;
   }
   async root(name, savedId) {
-    var _a;
+    var _a, _b, _c, _d, _e, _f, _g;
     if (!safeSegment(name)) throw new Error("Enter one non-empty dedicated folder name, without slashes.");
     if (savedId) {
       const f = await this.metadata(savedId);
-      if (f.trashed || f.mimeType !== FOLDER || ((_a = f.appProperties) == null ? void 0 : _a.gsyncPersonal) !== "1") throw new Error("Bound folder unavailable. Sync stopped; it will not be recreated automatically.");
+      if (f.id !== savedId || f.trashed || f.mimeType !== FOLDER || !["1", "2"].includes((_b = (_a = f.appProperties) == null ? void 0 : _a.gsyncPersonal) != null ? _b : "")) throw new Error("Bound folder unavailable. Sync stopped; it will not be recreated automatically.");
+      const journals = await this.list("'" + q(savedId) + "' in parents and trashed = false and mimeType = '" + FOLDER + "' and appProperties has { key='gsyncDeletionJournal' and value='1' }");
+      if (journals.some((j) => {
+        var _a2;
+        return j.mimeType !== FOLDER || ((_a2 = j.appProperties) == null ? void 0 : _a2.gsyncDeletionJournal) !== "1";
+      })) throw new Error("Invalid deletion history folder.");
+      this.historyFolders = journals.map((j) => j.id);
+      if (!this.historyFolders.length) {
+        if (((_c = f.appProperties) == null ? void 0 : _c.gsyncDeletionJournal) === "1") throw new Error("Deletion history is missing. Restore its folder from Drive trash before syncing.");
+        const journal = await this.req(API + "/files?fields=id", { method: "POST", contentType: "application/json", body: JSON.stringify({ name: "GSync deletion history - " + crypto.randomUUID(), mimeType: FOLDER, parents: [savedId], appProperties: { gsyncDeletionJournal: "1" } }) });
+        const journalId = journal.json.id;
+        if (!journalId) throw new Error("Deletion history could not be initialized.");
+        this.historyFolders = [journalId];
+      }
+      if (((_d = f.appProperties) == null ? void 0 : _d.gsyncPersonal) !== "2" || ((_e = f.appProperties) == null ? void 0 : _e.gsyncDeletionJournal) !== "1") {
+        const upgraded = await this.req(API + "/files/" + id(savedId) + "?fields=" + FIELDS, { method: "PATCH", contentType: "application/json", body: JSON.stringify({ appProperties: { gsyncPersonal: "2", gsyncDeletionJournal: "1" } }) });
+        const root = upgraded.json;
+        if (root.id !== savedId || ((_f = root.appProperties) == null ? void 0 : _f.gsyncPersonal) !== "2" || ((_g = root.appProperties) == null ? void 0 : _g.gsyncDeletionJournal) !== "1") throw new Error("Destination upgrade could not be verified.");
+      }
       return f.id;
     }
     throw new Error("No destination bound. Create a destination on ONE device in settings, then copy its folder ID to all other devices.");
@@ -285,11 +311,12 @@ var DriveClient = class {
     const r = await this.req(`${API}/files?fields=id`, {
       method: "POST",
       contentType: "application/json",
-      body: JSON.stringify({ name, mimeType: FOLDER, parents: [parentId], ...root ? { appProperties: { gsyncPersonal: "1" } } : {} })
+      body: JSON.stringify({ name, mimeType: FOLDER, parents: [parentId], ...root ? { appProperties: { gsyncPersonal: "2" } } : {} })
     });
     return r.json.id;
   }
   async listTree(rootId) {
+    var _a, _b, _c;
     const files = /* @__PURE__ */ new Map();
     const folders = /* @__PURE__ */ new Map([["", rootId]]);
     const queue = [["", rootId]];
@@ -300,6 +327,10 @@ var DriveClient = class {
       if (visited.has(parent) || visited.size > 5e3) throw new Error("Folder traversal limit reached.");
       visited.add(parent);
       for (const f of await this.list(`'${q(parent)}' in parents and trashed = false`)) {
+        if (parent === rootId && f.mimeType === FOLDER && ((_a = f.appProperties) == null ? void 0 : _a.gsyncDeletionJournal) === "1") {
+          if (!this.historyFolders.includes(f.id)) this.historyFolders.push(f.id);
+          continue;
+        }
         if (!safeSegment(f.name)) throw new Error("Unsafe remote filename; sync stopped.");
         const path = prefix ? `${prefix}/${f.name}` : f.name;
         if (path.length > 1e3 || path.split("/").length > 30) throw new Error("Remote path too deep.");
@@ -313,7 +344,30 @@ var DriveClient = class {
         } else if (!f.mimeType.startsWith("application/vnd.google-apps.")) files.set(path, f);
       }
     }
-    return { files, folders };
+    this.deletions = [];
+    for (const folderId of this.historyFolders) for (const marker of await this.list("'" + q(folderId) + "' in parents and trashed = false")) {
+      const p = marker.appProperties;
+      if (marker.mimeType === FOLDER || (p == null ? void 0 : p.gsyncDeleted) !== "1" || !p.remoteId || p.remoteId.length > 200 || !/^[A-Za-z0-9+/]{43}=$/.test((_b = p.pathHash) != null ? _b : "") || !/^[A-Za-z0-9+/]{43}=$/.test((_c = p.localHash) != null ? _c : "")) throw new Error("Invalid deletion history; sync stopped.");
+      this.deletions.push({ remoteId: p.remoteId, pathHash: p.pathHash, localHash: p.localHash });
+    }
+    return { files, folders, deletions: this.deletions };
+  }
+  async recordDeletion(path, remoteId, localHash) {
+    if (!this.historyFolders.length) throw new Error("Deletion history is not initialized.");
+    const pathHash = await hash(new TextEncoder().encode(path).buffer);
+    if (this.deletions.some((d) => d.remoteId === remoteId && d.pathHash === pathHash && d.localHash === localHash)) return;
+    const marker = await this.req(API + "/files?fields=id", { method: "POST", contentType: "application/json", body: JSON.stringify({ name: "Deletion " + crypto.randomUUID(), mimeType: "application/octet-stream", parents: [this.historyFolders[0]], appProperties: { gsyncDeleted: "1", remoteId, pathHash, localHash } }) });
+    if (!marker.json.id) throw new Error("Deletion history write could not be verified.");
+    this.deletions.push({ remoteId, pathHash, localHash });
+  }
+  async trashFile(expected, parentId) {
+    var _a, _b, _c;
+    const latest = (await this.req(WRITE_API + "/files/" + id(expected.id) + "?fields=" + WRITE_FIELDS)).json;
+    if (latest.id !== expected.id || !/^\d+$/.test(expected.version) || latest.version !== expected.version || ((_a = latest.labels) == null ? void 0 : _a.trashed) || !((_b = latest.parents) == null ? void 0 : _b.some((p) => p.id === parentId))) throw new Error("Drive changed or moved before deletion; retry.");
+    if (!latest.mimeType || latest.mimeType.startsWith("application/vnd.google-apps.")) throw new Error("Refusing to trash a folder or native Google document.");
+    if (typeof latest.etag !== "string" || !/^"[\x21\x23-\x7e]+"$/.test(latest.etag)) throw new Error("Valid Drive v2 ETag required before deletion.");
+    const trashed = (await this.req(WRITE_API + "/files/" + id(expected.id) + "/trash?fields=" + WRITE_FIELDS, { method: "POST", etag: latest.etag })).json;
+    if (trashed.id !== expected.id || ((_c = trashed.labels) == null ? void 0 : _c.trashed) !== true) throw new Error("Drive trash operation could not be verified. Retry sync.");
   }
   async download(file) {
     const r = await this.req(`${API}/files/${id(file.id)}?alt=media`);
@@ -390,7 +444,7 @@ var GSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
       }
     };
     new import_obsidian3.Setting(el).setName("GSync Personal").setHeading();
-    el.createEl("p", { text: "Full Google Drive permission; this plugin synchronizes only the bound folder. No automatic deletions. Credentials are encrypted locally; unlock after each restart. Notes uploaded to Drive are not end-to-end encrypted." });
+    el.createEl("p", { text: "Full Google Drive permission; this plugin synchronizes only the bound folder. Previously synchronized deletions propagate through trash; concurrent edits are preserved. Credentials are encrypted locally; unlock after each restart. Notes uploaded to Drive are not end-to-end encrypted." });
     el.createEl("p", { text: this.plugin.unlocked ? this.plugin.signedIn ? "Unlocked \u2022 Google connected" : "Unlocked \u2022 Google not connected" : "Locked" });
     if (this.plugin.encrypted && !this.plugin.unlocked) {
       let pass = "";
@@ -430,8 +484,8 @@ var GSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
     if (this.plugin.signedIn && !this.plugin.settings.remoteFolderId) new import_obsidian3.Setting(el).setName("First device only: create destination").setDesc("On other devices, enter the existing folder ID instead. Sync never creates a destination automatically.").addButton((b) => b.setButtonText("Create new destination").onClick(() => void action(() => this.plugin.initializeFolder())));
     const draft = { ...this.plugin.settings };
     new import_obsidian3.Setting(el).setName("Synchronization").setHeading();
-    new import_obsidian3.Setting(el).setName("Dedicated folder name").setDesc("Created by this app. Existing arbitrary Drive files are not imported.").addText((t) => t.setValue(draft.remoteFolder).onChange((v) => draft.remoteFolder = v.trim()));
-    new import_obsidian3.Setting(el).setName("Bound folder ID").setDesc("Filled after first sync. Copy this ID to another device using the same Google account and OAuth client. Keep it after renaming the folder.").addText((t) => t.setValue(draft.remoteFolderId).onChange((v) => draft.remoteFolderId = v.trim()));
+    new import_obsidian3.Setting(el).setName("Dedicated folder name").setDesc("Name used when creating a destination; existing destinations remain bound by ID.").addText((t) => t.setValue(draft.remoteFolder).onChange((v) => draft.remoteFolder = v.trim()));
+    new import_obsidian3.Setting(el).setName("Bound folder ID").setDesc("Filled when creating the destination. Copy this ID to another device using the same Google account and OAuth client. Keep it after renaming the folder.").addText((t) => t.setValue(draft.remoteFolderId).onChange((v) => draft.remoteFolderId = v.trim()));
     new import_obsidian3.Setting(el).setName("Auto-sync interval (minutes)").setDesc("0 disables it. Runs only after unlocking.").addText((t) => t.setValue(String(draft.autoSyncMinutes)).onChange((v) => draft.autoSyncMinutes = Number(v)));
     new import_obsidian3.Setting(el).setName("Maximum file size (MB)").addText((t) => t.setValue(String(draft.maxFileSizeMB)).onChange((v) => draft.maxFileSizeMB = Number(v)));
     new import_obsidian3.Setting(el).setName("Allowed extensions").setDesc("Comma-separated. Executables and archives are not included by default.").addText((t) => t.setValue(draft.extensions).onChange((v) => draft.extensions = v));
@@ -442,7 +496,7 @@ var GSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
       this.display();
     })));
     new import_obsidian3.Setting(el).setName("Sync now").addButton((b) => b.setButtonText("Sync").onClick(() => void this.plugin.sync()));
-    el.createEl("p", { text: "Deleted files return from the other side. Binary conflicts create separate copies. Local recovery snapshots are in .gsync-personal-backups inside the vault; retain an independent backup." });
+    el.createEl("p", { text: "Delete an already synchronized file, then sync each device. Recovery copies and deletion history protect against stale copies. Binary conflicts create separate copies. Local recovery snapshots are in .gsync-personal-backups inside the vault; retain an independent backup." });
   }
 };
 
@@ -457,7 +511,7 @@ function excluded(path, settings, configDir) {
 }
 async function runSync(app, drive, settings, state, hooks) {
   const vault = app.vault;
-  const result = { uploaded: 0, downloaded: 0, conflicts: [], skipped: [], errors: [] };
+  const result = { uploaded: 0, downloaded: 0, deletedLocal: 0, deletedRemote: 0, conflicts: [], skipped: [], errors: [] };
   const check = () => {
     if (hooks.cancelled()) throw new Error("Sync cancelled.");
   };
@@ -468,6 +522,8 @@ async function runSync(app, drive, settings, state, hooks) {
     await hooks.checkpoint();
   }
   const tree = await drive.listTree(root);
+  const remoteById = new Map([...tree.files].map(([path, file]) => [file.id, path]));
+  const deletedIds = new Set(tree.deletions.map((d) => d.remoteId));
   const locals = vault.getFiles().filter((f) => !excluded(f.path, settings, vault.configDir));
   const canonical = /* @__PURE__ */ new Map();
   for (const path of [...locals.map((f) => f.path), ...tree.files.keys()]) {
@@ -475,7 +531,7 @@ async function runSync(app, drive, settings, state, hooks) {
     if (canonical.has(key2) && canonical.get(key2) !== path) throw new Error("Case/Unicode path collision; sync stopped.");
     canonical.set(key2, path);
   }
-  const paths = [.../* @__PURE__ */ new Set([...locals.map((f) => f.path), ...tree.files.keys()])].sort();
+  const paths = [.../* @__PURE__ */ new Set([...locals.map((f) => f.path), ...tree.files.keys(), ...Object.keys(state)])].sort();
   const maxBytes = Math.min(100, Math.max(1, settings.maxFileSizeMB)) * 1024 * 1024;
   const parents = async (path) => {
     let cur = "";
@@ -499,6 +555,10 @@ async function runSync(app, drive, settings, state, hooks) {
     state[path] = { remoteId: r.id, remoteVersion: r.version, localHash: await hash(data) };
     await hooks.checkpoint();
   };
+  const forget = async (path) => {
+    delete state[path];
+    await hooks.checkpoint();
+  };
   const backup = async (path, data) => {
     check();
     const dir = ".gsync-personal-backups";
@@ -515,6 +575,14 @@ async function runSync(app, drive, settings, state, hooks) {
     const remote = await upload(cp, data);
     await remember(cp, remote, data);
     result.conflicts.push(cp);
+  };
+  const trashLocal = async (path, file, data, expectedHash) => {
+    await backup(path, data);
+    check();
+    if (vault.getAbstractFileByPath(path) !== file || await hash(await vault.readBinary(file)) !== expectedHash) throw new Error("Local note changed before deletion. Retry.");
+    await vault.trash(file, false);
+    result.deletedLocal++;
+    await forget(path);
   };
   for (const path of paths) {
     check();
@@ -535,7 +603,26 @@ async function runSync(app, drive, settings, state, hooks) {
       }
       const lh = ld ? await hash(ld) : "";
       const s = Object.prototype.hasOwnProperty.call(state, path) ? state[path] : void 0;
+      if (!r && s) {
+        const movedInside = remoteById.has(s.remoteId);
+        if (!movedInside) {
+          try {
+            const previous = await drive.metadata(s.remoteId);
+            if (!previous.trashed) throw new Error("Previous Drive file moved outside the destination or is unavailable. Local copy preserved.");
+          } catch (e) {
+            if (!(e instanceof DriveApiError && e.status === 404 && deletedIds.has(s.remoteId))) throw e;
+          }
+          await drive.recordDeletion(path, s.remoteId, s.localHash);
+        }
+        if (l && ld) {
+          if (lh !== s.localHash) await conflict(path, ld);
+          await trashLocal(path, l, ld, lh);
+        } else await forget(path);
+        continue;
+      }
       if (l && ld && !r) {
+        const pathHash = await hash(new TextEncoder().encode(path).buffer);
+        if (tree.deletions.some((d) => d.pathHash === pathHash && d.localHash === lh)) throw new Error("Previously deleted copy detected. Restore the original from Drive trash or use a new filename; it was not re-uploaded.");
         const created = await upload(path, ld);
         await remember(path, created, ld);
         result.uploaded++;
@@ -551,9 +638,28 @@ async function runSync(app, drive, settings, state, hooks) {
         result.skipped.push(path);
         continue;
       }
+      if (!l && s && s.remoteId === r.id) {
+        if (await hash(rd) === s.localHash) {
+          await backup(path, rd);
+          check();
+          if (vault.getAbstractFileByPath(path)) throw new Error("Local path reappeared before deletion. Retry.");
+          const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+          const parentId = tree.folders.get(folder);
+          if (!parentId) throw new Error("Remote parent unavailable; deletion refused.");
+          await drive.trashFile(r, parentId);
+          await drive.recordDeletion(path, r.id, s.localHash);
+          deletedIds.add(r.id);
+          result.deletedRemote++;
+          await forget(path);
+          continue;
+        }
+        await backup(path, rd);
+        result.conflicts.push(path);
+      }
       if (!l) {
         await parents(path);
         check();
+        if (vault.getAbstractFileByPath(path)) throw new Error("Local path changed during download. Retry.");
         await vault.createBinary(path, rd);
         await remember(path, r, rd);
         result.downloaded++;
@@ -610,6 +716,7 @@ var GSyncPlugin = class extends import_obsidian5.Plugin {
     this.pending = null;
     this.prepared = null;
     this.active = true;
+    this.vaultReady = false;
     this.busy = false;
     this.signingIn = false;
     this.credentialBusy = false;
@@ -646,6 +753,9 @@ var GSyncPlugin = class extends import_obsidian5.Plugin {
       }
     } });
     this.registerObsidianProtocolHandler(PROTOCOL_ACTION, (p) => void this.finishSignIn(p));
+    this.app.workspace.onLayoutReady(() => {
+      if (this.active) this.vaultReady = true;
+    });
     this.schedule();
   }
   onunload() {
@@ -828,6 +938,10 @@ var GSyncPlugin = class extends import_obsidian5.Plugin {
       new import_obsidian5.Notice("An operation is already running.");
       return;
     }
+    if (!this.vaultReady) {
+      new import_obsidian5.Notice("Wait for the vault to finish loading before syncing.");
+      return;
+    }
     if (!this.signedIn) {
       new import_obsidian5.Notice("Unlock GSync Personal and connect Google in settings.");
       return;
@@ -835,9 +949,9 @@ var GSyncPlugin = class extends import_obsidian5.Plugin {
     this.busy = true;
     try {
       const r = await runSync(this.app, new DriveClient(() => this.token()), this.settings, this.state, { checkpoint: () => this.saveAll(), cancelled: () => !this.active });
-      new import_obsidian5.Notice(`GSync Personal: ${r.uploaded} uploaded, ${r.downloaded} downloaded, ${r.conflicts.length} conflict copies, ${r.skipped.length} skipped, ${r.errors.length} errors.`, 1e4);
+      new import_obsidian5.Notice(`GSync Personal: ${r.uploaded} uploaded, ${r.downloaded} downloaded, ${r.deletedLocal} local / ${r.deletedRemote} Drive files moved to trash, ${r.conflicts.length} conflict copies, ${r.skipped.length} skipped, ${r.errors.length} errors.`, 1e4);
       if (r.errors.length) new import_obsidian5.Notice(r.errors.slice(0, 3).join("\n"), 2e4);
-      if (r.conflicts.length) new import_obsidian5.Notice("Both versions preserved. Review: " + r.conflicts.slice(0, 3).join(", "), 2e4);
+      if (r.conflicts.length) new import_obsidian5.Notice("Conflicting edits preserved. Review: " + r.conflicts.slice(0, 3).join(", "), 2e4);
     } catch (e) {
       new import_obsidian5.Notice(e.message, 15e3);
     } finally {
